@@ -21,7 +21,6 @@ import type { SubmitFailure } from "@/hooks/useChamberSession";
 import { reportFailure } from "@/lib/monitoring";
 import VerifyEmailGate from "./VerifyEmailGate";
 import PacketRecipients from "@/components/PacketRecipients";
-import { PEO_AUTHORIZATION_QUESTION } from "@/data/legalWording";
 
 interface ReckoningTabProps {
   data: ChamberData;
@@ -247,7 +246,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
         {/* M-1.1, D-608: once certified, which PEOs may receive the packet; none is allowed, and then nothing is sent. */}
         {certification.status === "certified" && !needsRecertify && !peoChanged && !submitted && sessionId && (
           <div className="border border-border rounded-xl p-4">
-            <PacketRecipients sessionId={sessionId} heading={PEO_AUTHORIZATION_QUESTION} />
+            <PacketRecipients sessionId={sessionId} />
           </div>
         )}
         {peoChanged && !needsRecertify && !submitted && (
@@ -456,7 +455,7 @@ const ReckoningTab = ({ data, provenance = NO_PROVENANCE, verified = NO_VERIFIED
               </motion.div>
               {sessionId && (
                 <div className="bg-card border border-border rounded-xl p-6 text-left mb-6">
-                  <PacketRecipients sessionId={sessionId} heading={PEO_AUTHORIZATION_QUESTION} />
+                  <PacketRecipients sessionId={sessionId} />
                 </div>
               )}
               <motion.div

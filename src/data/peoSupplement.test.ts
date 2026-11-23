@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExtraAnswers } from "./extraAnswers";
-import { buildSupplement, supplementFilename, supplementPeos } from "./peoSupplement";
+import { buildSupplement, supplementFilename, supplementFor, supplementPeos } from "./peoSupplement";
 import type { ExtraQuestion } from "./peoProfiles";
 import type { PeoRecord } from "./peoCatalog";
 
@@ -77,5 +77,19 @@ describe("supplementPeos: whose supplement is offered", () => {
     expect(supplementPeos(catalog, "trinet", certified).map((p) => p.name)).toEqual(["TriNet", "Oasis"]);
     expect(supplementPeos(catalog, null, { "3": certified["5"] }).map((p) => p.name)).toEqual(["Justworks"]);
     expect(supplementPeos(catalog, "ADP TotalSource", {})).toEqual([]);
+  });
+});
+
+describe("supplementFor: a listed market's supplement (ADR 0029)", () => {
+  const from = { certified, fileId: "EAA-2026-0007", version: 3, companyName: "Acme" };
+  const market = (over: Partial<PeoRecord>): PeoRecord => ({
+    id: 5, name: "TriNet", listed: true, lastVerified: null,
+    profile: { extraQuestions: QUESTIONS } as unknown as PeoRecord["profile"], ...over,
+  });
+
+  // Catches: a carrier's supplement built as a PEO's, so the document the carrier opens says "no other PEO receives them".
+  it("is of its market's line: a carrier's for workers' comp, a PEO's when the record names none", () => {
+    expect(supplementFor(market({ name: "Granite Ridge Mutual", line: "workers_comp" }), from)?.line).toBe("workers_comp");
+    expect(supplementFor(market({}), from)?.line).toBe("peo");
   });
 });

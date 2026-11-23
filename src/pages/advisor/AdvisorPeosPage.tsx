@@ -1,3 +1,4 @@
+import { LINE_LABELS, lineOf } from "@/data/lines";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -81,6 +82,8 @@ const AdvisorPeosPage = () => {
                             className={`block px-4 py-3 min-h-11 hover:bg-muted ${p === selected ? "bg-muted" : ""}`}
                           >
                             <span className="block font-medium">{p.name}</span>
+                            {/* A market that is no PEO says what it is (ADR 0029); a PEO reads as it always has. */}
+                            {lineOf(p.line) !== "peo" && <span className="block text-xs text-muted-foreground">{`${LINE_LABELS[lineOf(p.line)]} carrier`}</span>}
                             <span className={`block text-xs ${line.includes("out of date") ? "text-warning" : "text-muted-foreground"}`}>
                               {line.includes("out of date") && <AlertTriangle className="inline w-3 h-3 mr-1 -mt-0.5" aria-hidden="true" />}
                               {line}

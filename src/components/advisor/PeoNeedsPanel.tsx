@@ -1,3 +1,4 @@
+import type { QuoteLine } from "@/data/lines";
 import { useId, useState } from "react";
 import { AlertTriangle, ClipboardList } from "lucide-react";
 import EligibilityChecks from "@/components/peo/EligibilityChecks";
@@ -60,6 +61,8 @@ interface PeoNeedsPanelProps {
   onSendRecorded: () => void;
   /** The PEO threads' mail: a PEO sent to through the product can be followed up or withdrawn from on its card (M-2.4). */
   mail?: readonly QuoteRequestMessageRow[];
+  /** What the intake is for (ADR 0029): a PEO intake unless said. `catalog` holds the markets of this line, and a send's composer is worded by it. */
+  line?: QuoteLine;
 }
 
 const chip = "inline-flex items-center text-xs px-2 py-0.5 rounded-full whitespace-nowrap";
@@ -97,7 +100,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
   fileId: string;
   companyName: string;
   builtFrom: BuiltFrom;
-  bundle: Pick<PeoNeedsPanelProps, "catalog" | "submission" | "sessionId" | "stage" | "onSendRecorded" | "mail">;
+  bundle: Pick<PeoNeedsPanelProps, "catalog" | "submission" | "sessionId" | "stage" | "onSendRecorded" | "mail" | "line">;
 }) => {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -197,6 +200,7 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
       {bundle.submission && (
         <SendToPeo
           sessionId={bundle.sessionId}
+          line={bundle.line}
           peo={peo.name}
           companyName={companyName}
           fileId={fileId}
@@ -252,9 +256,9 @@ const PeoCard = ({ entry, certified, chosen, sent, askBlocked, onDraft, today, f
  * apart, what it needs only before signing, with its eligibility checks as warnings beside it, and drafts an
  * information request from what is missing. Nothing here ranks a PEO or sends anything.
  */
-const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom, submission, sessionId, stage, onSendRecorded, mail }: PeoNeedsPanelProps) => {
+const PeoNeedsPanel = ({ certified, catalog, catalogStatus, onRetryCatalog, chosenPeo, quoteRequests, askBlocked, onDraft, fileId, companyName, builtFrom, submission, sessionId, stage, onSendRecorded, mail, line }: PeoNeedsPanelProps) => {
   const today = localToday();
-  const bundle = { catalog, submission, sessionId, stage, onSendRecorded, mail };
+  const bundle = { catalog, submission, sessionId, stage, onSendRecorded, mail, line };
   const body = () => {
     if (!certified) return <p className="text-sm text-muted-foreground">Available once the prospect has certified their intake: each PEO's list is built from what they certified.</p>;
     if (certified.cantTell) {

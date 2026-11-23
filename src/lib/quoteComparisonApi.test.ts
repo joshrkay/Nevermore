@@ -43,10 +43,40 @@ describe("getQuoteComparison (one read: opportunity_quote_comparison)", () => {
     expect(rpc).toHaveBeenCalledWith("opportunity_quote_comparison", { p_firm_id: "f1", p_opportunity_id: "o1" });
   });
 
+  // Catches: a workers' comp comparison read as a PEO's (its line lost), a carrier's premium lost or its 0 minimum read as left out, or a note about the premium
+  // failing the whole read because only a PEO's areas were known.
+  it("reads the comparison's line, each quote's workers' comp figures (0 as 0) and a note about one of the line's areas", async () => {
+    rpc.mockResolvedValue({
+      data: {
+        line: "workers_comp", can_add: true,
+        columns: [{ quote_request_id: 5, peo_name: "Granite Ridge Mutual", status: "quoted", quote: {
+          id: 9, kind: "firm_offer", received_on: null, expires_on: null, proposed_start_on: null, admin_fee: null, admin_fee_basis: null, one_off_fees: null,
+          workers_comp: [{ state: "OR", class_code: "2003", rate: 4.12 }], unemployment: null, medical: null, note: null, annual_premium: 18450, experience_mod: 0.92, minimum_premium: 0,
+        } }],
+        notes: [{ id: 4, quote_request_id: 5, area: "annual_premium", visibility: "internal", body: "Includes the audit", author: null, created_at: "2026-11-11T10:00:00+00:00" }],
+      },
+      error: null,
+    });
+    const got = await getQuoteComparison("f1", "o1");
+    expect(got.line).toBe("workers_comp");
+    expect(got.columns[0].quote).toMatchObject({ annualPremium: 18450, experienceMod: 0.92, minimumPremium: 0 });
+    expect(got.notes[0].area).toBe("annual_premium");
+  });
+
+  // The site is deployed apart from the database: an answer from a database that has no lines yet names no line and no workers' comp figure.
+  // Catches: every comparison failing to load on that database.
+  it("reads an answer with no line as a PEO search's, its quotes holding no workers' comp figure", async () => {
+    rpc.mockResolvedValue({ data: answer, error: null });
+    const got = await getQuoteComparison("f1", "o1");
+    expect(got.line).toBe("peo");
+    expect(got.columns[0].quote).toMatchObject({ annualPremium: null, experienceMod: null, minimumPremium: null });
+  });
+
   // Catches: a figure left out read as 0 or an empty list (the screen would say "free" for "not quoted"), a fee that loses its basis, or a note that loses who may read it.
   it("reads each column's current quote in the screen's words, a left-out area as null, and the notes", async () => {
     rpc.mockResolvedValue({ data: answer, error: null });
     expect(await getQuoteComparison("f1", "o1")).toEqual({
+      line: "peo",
       canAdd: true,
       columns: [
         {
@@ -54,7 +84,7 @@ describe("getQuoteComparison (one read: opportunity_quote_comparison)", () => {
           quote: {
             id: 7, kind: "firm_offer", receivedOn: "2026-11-10", expiresOn: "2026-12-10", proposedStartOn: "2027-01-01", adminFee: 40, adminFeeBasis: "per_employee_per_month",
             oneOffFees: [{ name: "Setup", amount: 500 }], workersComp: [{ state: "CA", classCode: "8810", rate: 0.42 }], unemployment: [{ state: "CA", charge: "employer_rate" }],
-            medical: null, note: "By phone",
+            medical: null, note: "By phone", annualPremium: null, experienceMod: null, minimumPremium: null,
           },
         },
         { quoteRequestId: 2, peoName: "TriNet", status: "sent", quote: null },

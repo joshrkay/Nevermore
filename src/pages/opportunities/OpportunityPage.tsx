@@ -27,6 +27,7 @@ import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
 import { LoadFailed, NotAvailable, PlaceholderLines, PlaceholderPanel, RecordLoading, SlowLoadLine, useSlowLoad } from "@/components/workspace/states";
 import { useNoteOpened } from "@/components/workspace/useNoteOpened";
 import { useWorkspace } from "@/components/workspace/useWorkspace";
+import { lineOf } from "@/data/lines";
 import { sentToPeos } from "@/data/peoSend";
 import { useAuth } from "@/hooks/useAuth";
 import type { OpportunityFields, OpportunityPage as Page } from "@/lib/opportunityPageApi";
@@ -50,7 +51,8 @@ const OpportunityPage = () => {
   const [closing, setClosing] = useState<"won" | "lost" | "" | null>(null);
   // The submission is read once, for the quotes' "Still needs" and for the close's withdrawal (D-1726): when there are quotes.
   const [choosingPeos, setChoosingPeos] = useState(false);
-  const needs = useStillNeeds(firmId, query.data?.opportunity.submissionId ?? null, (query.data?.quotes.length ?? 0) > 0 || choosingPeos);
+  // The markets asked for are those of the opportunity's own line (ADR 0029): PEOs, or carriers for a workers' comp search.
+  const needs = useStillNeeds(firmId, query.data?.opportunity.submissionId ?? null, (query.data?.quotes.length ?? 0) > 0 || choosingPeos, lineOf(query.data?.opportunity.line));
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
   // The opportunity is now among the menu search's recent records (CRM-S1.2a, D-620): noted once its page has loaded.
@@ -140,6 +142,7 @@ const OpportunityPage = () => {
       )}
       {closing !== null && firmId && (
         <CloseOpportunityDialog
+          line={lineOf(opportunity.line)}
           firmId={firmId}
           target={{ id: opportunity.id, version: opportunity.version, name: opportunity.name, targetStart: opportunity.targetStart, employees: opportunity.employees ?? page.intake?.censusSize ?? null }}
           accountName={account.name}
@@ -160,8 +163,8 @@ const OpportunityPage = () => {
             needs={needs}
             action={canAct && page.intake?.certifiedAt ? (
               <div className="flex flex-wrap items-start gap-2">
-                <ChoosePeos alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => setChoosingPeos(true)} returnTo={`/opportunities/${opportunity.id}`} onSent={closed} />
-                {!isClosed && page.quotes.some((q) => q.sentOn !== null) && <SendToAnotherPeo opportunityId={opportunity.id} />}
+                <ChoosePeos line={lineOf(opportunity.line)} alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => setChoosingPeos(true)} returnTo={`/opportunities/${opportunity.id}`} onSent={closed} />
+                {!isClosed && page.quotes.some((q) => q.sentOn !== null) && <SendToAnotherPeo opportunityId={opportunity.id} line={lineOf(opportunity.line)} />}
               </div>
             ) : undefined} closeReasons={Object.fromEntries(Object.entries(outcome.data?.quotes ?? {}).map(([k, v]) => [k, v.closeReason]))} />}
           {firmId && page.quotes.length > 0 && <QuoteComparisonPanel key={`compare-${opportunity.id}`} firmId={firmId} opportunityId={opportunity.id} noNotesBecause={isSupport ? "Notes can't be added during a Nevermore support session." : undefined} />}

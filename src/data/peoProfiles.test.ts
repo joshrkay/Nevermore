@@ -42,8 +42,15 @@ const TRINET_ROW = {
 describe("parsePeoCatalog", () => {
   it("reads a PEO with no published profile as one with no facts: nothing is guessed", () => {
     expect(parsePeoCatalog([{ id: 1, name: "ADP TotalSource", profile: null }])).toEqual([
-      { id: 1, name: "ADP TotalSource", listed: true, lastVerified: null, profile: null },
+      { id: 1, name: "ADP TotalSource", line: "peo", listed: true, lastVerified: null, profile: null },
     ]);
+  });
+
+  // Catches: a carrier read as a PEO (or the reverse), so the screens that offer markets cannot tell them apart; or the whole catalog failing on a database
+  // that has no lines yet, where every market is a PEO.
+  it("reads each market's line, and one with none as a PEO", () => {
+    expect(parsePeoCatalog([{ id: 9, name: "Granite Ridge Mutual", line: "workers_comp", profile: null }, { id: 1, name: "ADP TotalSource", profile: null }]).map((m) => [m.name, m.line]))
+      .toEqual([["Granite Ridge Mutual", "workers_comp"], ["ADP TotalSource", "peo"]]);
   });
 
   it("reads the profile in use: its rules for the fit checks, the rest as the profile says", () => {

@@ -82,6 +82,15 @@ describe("getOpportunityPage", () => {
     expect((await getOpportunityPage("f1", "o1"))!.opportunity.referralPartner).toBeNull();
   });
 
+  // Catches: a workers' comp search drawn as a PEO search because its line was lost on the way to the screen; or the whole page failing on a database that
+  // has no lines yet (the site is deployed apart from the database), where every opportunity is a PEO search.
+  it("reads the opportunity's line, and an answer without one as a PEO search", async () => {
+    rpc.mockResolvedValue({ data: { ...page, opportunity: { ...page.opportunity, line: "workers_comp" } }, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.opportunity.line).toBe("workers_comp");
+    rpc.mockResolvedValue({ data: page, error: null });
+    expect((await getOpportunityPage("f1", "o1"))!.opportunity.line).toBe("peo");
+  });
+
   // Catches: a part of the answer (the stage, the main contact, the quotes, the intake, a contact's marks) lost or renamed on the way to the screen.
   it("reads the opportunity, its quotes, its intake and its contacts in the page's own words", async () => {
     rpc.mockResolvedValue({ data: page, error: null });
@@ -89,7 +98,7 @@ describe("getOpportunityPage", () => {
     expect(got.opportunity).toEqual({
       id: "o1", version: 4, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1",
       expectedClose: "2026-12-12", value: 7100, source: "Referral", nextStep: "Send PEO B the loss run", submissionId: "i1", createdAt: "2026-10-21T10:00:00+00:00",
-      updatedAt: "2026-11-11T10:00:00+00:00", referralPartner: null, stage: "in_market",
+      updatedAt: "2026-11-11T10:00:00+00:00", referralPartner: null, stage: "in_market", line: "peo",
     });
     expect(got.account).toEqual({ id: "a1", name: "Harborview Dental Group", archived: false });
     expect(got.owner).toEqual({ id: "u1", name: "Dana Reyes" });

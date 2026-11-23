@@ -2,6 +2,7 @@
 // the answers to them in the last certified version, for that PEO only. It is its own file beside the packet: the
 // packet (The Manuscript), the emails and every other PEO's files never carry these answers.
 import { answerFor, isAnswerTo, type ExtraAnswer, type ExtraAnswers } from "./extraAnswers";
+import type { QuoteLine } from "./lines";
 import { findPeo, peoSlug, type PeoRecord } from "./peoCatalog";
 import type { ExtraQuestion } from "./peoProfiles";
 import { formatFieldValue } from "./provenance";
@@ -16,6 +17,8 @@ export interface SupplementRow {
 export interface Supplement {
   title: string;
   peo: string;
+  /** The line of the market it is for (ADR 0029): the document says "no other PEO", or "no other carrier", receives these answers. */
+  line: QuoteLine;
   companyName: string;
   fileId: string;
   /** The certified version it is built from; null when none is recorded. */
@@ -47,7 +50,8 @@ function inWords(a: ExtraAnswer | null): string | null {
  * longer asks. Only that PEO's answers are read.
  */
 export function buildSupplement(o: {
-  peo: { id: number; name: string };
+  /** The market: a PEO unless its line says otherwise. */
+  peo: { id: number; name: string; line?: QuoteLine };
   questions: readonly ExtraQuestion[];
   /** Null for a version certified before extra answers were kept: it can't tell any. */
   certified: ExtraAnswers | null;
@@ -67,6 +71,7 @@ export function buildSupplement(o: {
   return {
     title: `Additional questions from ${o.peo.name}`,
     peo: o.peo.name,
+    line: o.peo.line ?? "peo",
     companyName: o.companyName,
     fileId: o.fileId,
     version: o.version,
@@ -89,7 +94,7 @@ export interface SupplementSource {
 /** A listed PEO's supplement from a certified version, or null when its profile in use asks no questions of its own. */
 export function supplementFor(peo: PeoRecord, from: SupplementSource): Supplement | null {
   if (peo.id === undefined || !peo.profile || peo.profile.extraQuestions.length === 0) return null;
-  return buildSupplement({ peo: { id: peo.id, name: peo.name }, questions: peo.profile.extraQuestions, ...from });
+  return buildSupplement({ peo: { id: peo.id, name: peo.name, line: peo.line }, questions: peo.profile.extraQuestions, ...from });
 }
 
 /** "EAA-2026-0007-additional-questions-trinet-v3.pdf". */

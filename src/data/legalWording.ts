@@ -8,6 +8,8 @@
 // DRAFT: NOT LEGALLY REVIEWED. Every screen that shows this wording says so (WORDING_IS_DRAFT, DRAFT_WORDING_NOTICE) until counsel approves it
 // (docs/LEGAL_REVIEW.md).
 
+import type { QuoteLine } from "@/data/lines";
+
 export const PEO_AUTHORIZATION_VERSION = "2026-11-draft-1";
 
 /** True until counsel has approved the wording in this module. */
@@ -34,12 +36,40 @@ export const PEO_AUTHORIZATION_EXPLAINER =
   "Tick each PEO your advisor may send your packet to. Your packet includes your employees' personal information. You don't have to tick any: with none ticked, nothing is sent. You can add or withdraw a PEO at any time from your profile.";
 
 /**
+ * The same question and explainer for each line (ADR 0029): on a workers' comp intake the employer chooses among carriers, and is never asked about a PEO.
+ * The words recorded with a tick (peoAuthorizationText, peoWithdrawalText) name the market itself and say neither word, so they are the same for every
+ * line, under the one version. DRAFT: NOT LEGALLY REVIEWED, as the rest of this module.
+ */
+export const AUTHORIZATION_WORDING: Record<QuoteLine, { question: string; explainer: string; theOneYouTick: string; couldNotLoad: string }> = {
+  peo: {
+    question: PEO_AUTHORIZATION_QUESTION,
+    explainer: PEO_AUTHORIZATION_EXPLAINER,
+    theOneYouTick: "the PEO you tick",
+    couldNotLoad: "We couldn't load the PEOs. Check your connection and try again.",
+  },
+  workers_comp: {
+    question: "Which workers' comp carriers may receive your packet?",
+    explainer:
+      "Tick each carrier your advisor may send your packet to. Your packet includes your employees' personal information. You don't have to tick any: with none ticked, nothing is sent. You can add or withdraw a carrier at any time from your profile.",
+    theOneYouTick: "the carrier you tick",
+    couldNotLoad: "We couldn't load the carriers. Check your connection and try again.",
+  },
+};
+
+/**
  * The line every message to a PEO carries, last in the fixed block under the advisor's note (M-2.1, D-12): the "line counsel requires", in draft. The
  * database writes it into the message (public.peo_send_notice, kept equal by schemaSync.test.ts), so the advisor can't edit it. No apostrophes: the
  * sync test reads the database's copy as one quoted string.
  */
 export const PEO_SEND_NOTICE =
   "Draft wording: sent with the authorization of the employer, for this PEO alone to consider them for a quote. Please do not pass the link on.";
+
+/**
+ * The same line on a message to a carrier, on a workers' comp search (ADR 0029): the database writes it in place of the PEO's (public.carrier_send_notice,
+ * kept equal by schemaSync.test.ts), so a carrier is never told the message was for a PEO. DRAFT: NOT LEGALLY REVIEWED. No apostrophes, as above.
+ */
+export const CARRIER_SEND_NOTICE =
+  "Draft wording: sent with the authorization of the employer, for this carrier alone to consider them for a quote. Please do not pass the link on.";
 
 /** The heading on the employer's profile (D-608). */
 export const PEO_AUTHORIZATION_PROFILE_HEADING = "Who can receive my packet";

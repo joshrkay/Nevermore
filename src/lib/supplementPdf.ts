@@ -1,4 +1,5 @@
 import jsPDF from "jspdf";
+import { MARKET_WORDS } from "@/data/lines";
 import { supplementFilename, type Supplement } from "@/data/peoSupplement";
 import { PACKET_STYLE, pdfSafe } from "./manuscriptPdf";
 
@@ -63,7 +64,7 @@ export function buildSupplementPdf(s: Supplement, opts: SupplementPdfOptions = {
   lines(s.title, 18, "bold", INK);
   y += 1;
   lines(`${s.companyName} · ${s.fileId} · ${version}`, 9, "normal", MUTED);
-  lines(`For ${s.peo} only. These answers are not in the underwriting packet, and no other PEO receives them.`, 9, "normal", MUTED);
+  lines(`For ${s.peo} only. These answers are not in the underwriting packet, and no other ${MARKET_WORDS[s.line].one} receives them.`, 9, "normal", MUTED);
   y += 2;
   lines(s.notAnswered.length ? `Not answered: ${s.notAnswered.length} of ${s.rows.length}` : `All ${s.rows.length} answered`, 9, "bold", s.notAnswered.length ? WARN : INK);
 

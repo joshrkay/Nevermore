@@ -133,6 +133,32 @@ describe("the withdrawal offered on Lost", () => {
     await waitFor(() => expect(markOpportunityLost).toHaveBeenCalledWith("f1", "o1", { reason: "price", note: "" }, 4, undefined));
   });
 
+  // Catches: a workers' comp search closed under words about PEOs: the offer to tell who is still open names carriers (ADR 0029).
+  it("offers to tell the carriers still open on a workers' comp search, and says PEO nowhere", async () => {
+    const { dialog } = await open({ line: "workers_comp", quotes: [quote(1, "Granite Ridge Mutual", "quoted"), quote(2, "Summit Casualty", "sent")] });
+    expect(within(dialog).getByRole("group", { name: "Tell the carriers still open" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: "Send a withdrawal to Granite Ridge Mutual and Summit Casualty" })).toBeChecked();
+    // The reason for a loss is the same list, with going direct said of a carrier.
+    expect(within(within(dialog).getByLabelText("Reason")).getAllByRole("option").map((o) => o.textContent)).toEqual(
+      ["Choose a reason", "Stayed with current provider", "Price", "Went direct to a carrier", "No decision", "Other"]);
+    expect(within(dialog).queryByText(/PEO/)).not.toBeInTheDocument();
+  });
+
+  // Catches: a workers' comp search told it is still checking which PEOs are open.
+  it("says it is still checking which carriers are open, on a workers' comp search", async () => {
+    const { user, dialog } = await open({ line: "workers_comp", mail: { status: "loading" } });
+    await user.selectOptions(within(dialog).getByLabelText("Reason"), "price");
+    await user.click(within(dialog).getByRole("button", { name: "Mark lost" }));
+    expect(await within(dialog).findByText("Still checking which carriers are open. Try again in a moment.")).toBeInTheDocument();
+    expect(markOpportunityLost).not.toHaveBeenCalled();
+  });
+
+  // Catches: a workers' comp search told the PEOs still open could not be checked.
+  it("says it could not check which carriers are still open, on a workers' comp search", async () => {
+    const { dialog } = await open({ line: "workers_comp", mail: { status: "failed" } });
+    expect(within(dialog).getByText("We couldn't check which carriers are still open, so no withdrawal is offered. Their links stop working either way.")).toBeInTheDocument();
+  });
+
   // Catches: a win that still sends the withdrawal after the person unticked it (only the loss was held to the box).
   it("(pinning) a win with the box unticked closes with the plain call", async () => {
     markOpportunityWon.mockResolvedValue({ conflict: false, stage: "won", version: 5 });

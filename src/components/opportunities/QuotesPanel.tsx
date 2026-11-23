@@ -4,6 +4,7 @@ import { quotePath } from "@/data/quotePage";
 import { PanelFailed, PlaceholderLine } from "@/components/workspace/states";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
 import { quoteCloseWords } from "@/data/opportunityClose";
+import { lineOf, MARKET_WORDS } from "@/data/lines";
 import { adminFeeWords, quoteStatusWords } from "@/data/opportunityPage";
 import type { OpportunityPage, OpportunityQuote } from "@/lib/opportunityPageApi";
 import type { useStillNeeds } from "./useStillNeeds";
@@ -27,8 +28,12 @@ export function QuotesPanel({ page, needs, action, closeReasons = {} }: {
 }) {
   const { quotes, intake } = page;
   const day = today();
+  // Who the quote requests went to, in the line's words (ADR 0029): PEOs, or carriers on a workers' comp search.
+  const line = lineOf(page.opportunity.line);
+  const market = MARKET_WORDS[line];
+  const title = market.one.charAt(0).toUpperCase() + market.one.slice(1);
   const columns: Column<OpportunityQuote>[] = [
-    { header: "PEO", cell: (q) => <Link to={quotePath(q.id)} className={linkClass}>{q.peoName}</Link> },
+    { header: title, cell: (q) => <Link to={quotePath(q.id)} className={linkClass}>{q.peoName}</Link> },
     {
       header: "Status",
       cell: (q) => {
@@ -37,7 +42,8 @@ export function QuotesPanel({ page, needs, action, closeReasons = {} }: {
       },
     },
     { header: "Sent", cell: (q) => (q.sentOn ? formatDay(q.sentOn) : notYet), className: "whitespace-nowrap" },
-    { header: "Admin fee", cell: (q) => (q.adminFeePepm !== null ? adminFeeWords(q.adminFeePepm) : notYet) },
+    // A PEO's quote has an admin fee; a carrier's has a premium, which the comparison below shows with the rest of what it quoted.
+    ...(line === "peo" ? [{ header: "Admin fee", cell: (q: OpportunityQuote) => (q.adminFeePepm !== null ? adminFeeWords(q.adminFeePepm) : notYet) }] : []),
     { header: "Expires", cell: (q) => (q.quoteExpiresOn ? formatDay(q.quoteExpiresOn) : notYet), className: "whitespace-nowrap" },
     {
       header: "Still needs",
@@ -47,11 +53,11 @@ export function QuotesPanel({ page, needs, action, closeReasons = {} }: {
   return (
     <ListPanel id="opportunity-quotes" heading="Quotes" count={quotes.length} seeAll={action}>
       {quotes.length === 0 ? (
-        <EmptyLine>{intake ? "No quotes yet. Quotes appear when the opportunity is sent to a PEO." : "No quotes yet."}</EmptyLine>
+        <EmptyLine>{intake ? `No quotes yet. Quotes appear when the opportunity is sent to ${market.a}.` : "No quotes yet."}</EmptyLine>
       ) : (
         <>
           <Rows caption="The opportunity's quote requests" columns={columns} rows={quotes} rowKey={(q) => String(q.id)} />
-          {needs.status === "failed" && <PanelFailed what="what each PEO still needs" message="We couldn't check what each PEO still needs." onRetry={needs.retry} className="mt-3 text-sm space-y-1" />}
+          {needs.status === "failed" && <PanelFailed what={`what each ${market.one} still needs`} message={`We couldn't check what each ${market.one} still needs.`} onRetry={needs.retry} className="mt-3 text-sm space-y-1" />}
         </>
       )}
     </ListPanel>

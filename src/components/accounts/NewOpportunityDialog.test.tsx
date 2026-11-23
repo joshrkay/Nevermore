@@ -91,6 +91,32 @@ describe("the New opportunity form (screen 25)", () => {
     expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 PEO search (West)");
   });
 
+  // Catches: no way to start a workers' comp search from the form, or the choice made on screen and dropped before the save.
+  it("asks what is being quoted, a PEO unless the person chooses workers' comp, and saves the choice", async () => {
+    const { user, dialog } = await open();
+    const line = field(dialog, "What is being quoted");
+    expect(line).toHaveValue("peo");
+    expect(within(line as HTMLElement).getAllByRole("option").map((o) => o.textContent)).toEqual(["PEO", "Workers' comp"]);
+    await user.selectOptions(line, "workers_comp");
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    await waitFor(() => expect(createOpportunity).toHaveBeenCalledTimes(1));
+    expect(createOpportunity.mock.calls[0][2]).toMatchObject({ line: "workers_comp" });
+  });
+
+  // Catches: a workers' comp search saved under the name "PEO search" because the offered name ignored the choice, or a name the person typed replaced by it.
+  it("offers the name of the chosen line's search, keeps it in step with the choice and the start, and stops once the person types in the name", async () => {
+    const { user, dialog } = await open();
+    await user.selectOptions(field(dialog, "What is being quoted"), "workers_comp");
+    expect(field(dialog, "Opportunity name")).toHaveValue("Workers' comp search");
+    await user.type(field(dialog, "Target start date"), "2027-03-15");
+    expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 workers' comp search");
+    await user.selectOptions(field(dialog, "What is being quoted"), "peo");
+    expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 PEO search");
+    await user.type(field(dialog, "Opportunity name"), " (West)");
+    await user.selectOptions(field(dialog, "What is being quoted"), "workers_comp");
+    expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 PEO search (West)");
+  });
+
   // Catches: a form saved with no name, a value that is not dollars, or a request sent for a form that is not right.
   it("will not save without a name, or with a value that isn't dollars, and says why in words", async () => {
     const { user, dialog } = await open();
@@ -120,7 +146,7 @@ describe("the New opportunity form (screen 25)", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ id: "o1", version: 1, stage: "qualifying" }));
     expect(createOpportunity).toHaveBeenCalledWith("f1", "a1", {
       name: "January 2028 renewal", targetStart: "2028-01-01", employees: 45, mainContactId: "c2", expectedClose: "2027-12-10", value: 7100, source: "Renewal",
-      referralPartnerCode: null, nextStep: "Ask Elena whether headcount changed.", ownerId: "u2", renewalId: null,
+      referralPartnerCode: null, nextStep: "Ask Elena whether headcount changed.", ownerId: "u2", renewalId: null, line: "peo",
     });
     expect(toast.success).toHaveBeenCalledWith("Opportunity created");
   });
@@ -255,6 +281,15 @@ describe("Start the renewal (the form filled in, D-449)", () => {
     await user.clear(field(dialog, "Target start date"));
     await user.type(field(dialog, "Target start date"), "2027-04-01");
     expect(field(dialog, "Opportunity name")).toHaveValue("March 2027 renewal for Harborview");
+  });
+
+  // Catches: a renewal renamed "Workers' comp search" when the person says what it quotes: a renewal's name is its own, whatever the line (ADR 0029).
+  it("keeps the renewal's name when what is being quoted is changed, and saves the choice", async () => {
+    const { user, dialog } = await openRenewal();
+    await user.selectOptions(field(dialog, "What is being quoted"), "workers_comp");
+    expect(field(dialog, "Opportunity name")).toHaveValue("January 2027 renewal");
+    await user.click(within(dialog).getByRole("button", { name: "Save opportunity" }));
+    await waitFor(() => expect(createOpportunity).toHaveBeenCalledWith("f1", "a1", expect.objectContaining({ renewalId: "r1", name: "January 2027 renewal", line: "workers_comp" })));
   });
 
   // Catches: a renewal someone else started meanwhile refused with a generic failure, or the form closed (the person then loses what they typed).

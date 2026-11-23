@@ -15,6 +15,7 @@ import InformationRequestPanel from "@/components/advisor/InformationRequestPane
 import { QuoteDetails } from "@/components/quotes/QuoteDetails";
 import { useOpportunityOutcomeQuery } from "@/components/opportunities/useOpportunityQueries";
 import { useStillNeeds } from "@/components/opportunities/useStillNeeds";
+import { lineOf } from "@/data/lines";
 import { noReplyWords, peoContactWords } from "@/data/quotePage";
 import { isOpenQuoteRequest, quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
 import { useQuotePageQuery, useQuotesQuery } from "@/components/quotes/useQuoteQueries";
@@ -36,7 +37,7 @@ const QuotePage = () => {
   // What the PEO still needs is worked out the way the opportunity's quotes panel does it (D-424), from the submission's last certified version.
   // Why a quote closed when the opportunity's close ended it (D-424), read beside the page so a failure of it never hides the page.
   const outcome = useOpportunityOutcomeQuery(firmId, query.data?.opportunity.opportunity.id ?? "", query.data?.request.status === "closed");
-  const needs = useStillNeeds(firmId, query.data?.detail.id ?? null, query.data != null);
+  const needs = useStillNeeds(firmId, query.data?.detail.id ?? null, query.data != null, lineOf(query.data?.opportunity.opportunity.line));
   // The quotes recorded on it (N-2.1): the newest is the current one (N-2.4). Read beside the page, so a failure of it never hides the page.
   const quoted = useQuotesQuery(firmId, query.data?.request.id ?? 0, query.data != null);
   const { current, superseded } = quoteRevisions(quoted.data ?? []);
@@ -44,6 +45,8 @@ const QuotePage = () => {
   if (query.data === null) return <Frame><NotAvailable noun="quote" backTo="/accounts" backLabel="Back to all accounts" /></Frame>;
   if (query.data === undefined) return <Frame><QuoteLoading /></Frame>;
   const { request, detail, opportunity: page } = query.data;
+  // What the opportunity is a search for (ADR 0029): it decides what a quote here holds and what who it was sent to is called.
+  const line = lineOf(page.opportunity.line);
   // Nothing can be changed during a Nevermore support session (ADR 0024) or on an archived account's opportunity (D-432), and only by someone the level rule lets change
   // the account's records (D-209); the database asks the same.
   const canAct = firmId !== null && !isSupport && !page.account.archived && page.canChange;
@@ -74,7 +77,7 @@ const QuotePage = () => {
       <DeclineReason request={request} className="mb-6 rounded-xl border border-border bg-muted/40 p-4" />
       <QuoteHeader request={request} actions={canRecordQuote || canClose ? (
         <>
-          {canRecordQuote && <RecordQuote request={request} mailFiles={mailFiles} documentOf={current?.document ? current.id : undefined} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
+          {canRecordQuote && <RecordQuote request={request} line={line} mailFiles={mailFiles} documentOf={current?.document ? current.id : undefined} onRecorded={() => { void query.refetch(); void quoted.refetch(); }} />}
           {canClose && <RecordDecline request={request} onRecorded={() => void query.refetch()} />}
           {canClose && <OpenStatusButtons request={request} onChanged={() => void query.refetch()} />}
           {canClose && <CloseQuote request={request} onClosed={() => void query.refetch()} />}
@@ -130,14 +133,15 @@ const QuotePage = () => {
       )}
       <QuoteDetails
         request={request}
+        line={line}
         contact={peoContactWords(detail.quoteRequestMessages, request.id)}
         stillNeeds={needs.status === "loading" ? null : needs.status === "failed" ? "Not checked" : needs.of(request.peo_name)}
         replyAddress={replyTo}
       />
-      <QuoteFigures request={request} />
+      <QuoteFigures request={request} line={line} current={current} quotes={quoted.data !== undefined ? undefined : quoted.isError ? "failed" : "loading"} />
       {current && <QuoteDocument quoteRequestId={request.id} quote={current} canChange={canAct} mailFiles={mailFiles} onChanged={() => void quoted.refetch()} />}
       <EarlierQuotes superseded={superseded} />
-      <WhatWasSent request={request} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
+      <WhatWasSent request={request} line={line} currentVersion={detail.currentVersion} messages={detail.quoteRequestMessages} />
     </Frame>
   );
 };

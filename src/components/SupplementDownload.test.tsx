@@ -15,7 +15,7 @@ const { default: SupplementDownload } = await import("./SupplementDownload");
 
 // Made up for the test: no real PEO's questions.
 const supplement: Supplement = {
-  title: "Additional questions from Sample PEO", peo: "Sample PEO", companyName: "Meridian Creative Group", fileId: "EAA-2026-0042", version: 3,
+  title: "Additional questions from Sample PEO", peo: "Sample PEO", line: "peo", companyName: "Meridian Creative Group", fileId: "EAA-2026-0042", version: 3,
   rows: [{ question: "Do you run a fleet?", answer: "No" }], notAnswered: [], earlier: [], cantTell: false,
 };
 // The certification the page was built from.

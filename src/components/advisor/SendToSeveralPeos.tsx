@@ -4,6 +4,7 @@ import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
+import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
 import { FIT_WORDS, NOT_MET_NOTE, fitOutcome, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import { groupByCompleteness, type CertifiedVersion, type PeoCompletenessEntry } from "@/data/peoCompleteness";
 import { localToday } from "@/data/peoProfiles";
@@ -42,6 +43,8 @@ export interface SendToSeveralPeosProps {
   alreadySent?: Readonly<Record<string, string>>;
   /** Where the submission stands in the pipeline. Given, the panel says before Send that it must be Ready for market first (D-1910); left out, it says nothing of it and the database still refuses. */
   stage?: PipelineStatus;
+  /** What the opportunity is a search for (ADR 0029): a PEO search unless said. `catalog` holds the markets of this line, and the words say PEOs or carriers. */
+  line?: QuoteLine;
 }
 
 /** A PEO as the choosing step lists it: what it still needs to quote and the eligibility checks it doesn't meet, either of which makes it not ready. */
@@ -75,6 +78,8 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   const id = useId();
   const [open, setOpen] = useState(p.startOpen ?? false);
   const [step, setStep] = useState<Step>("choose");
+  // Who this goes to, in the line's words: PEOs, or carriers on a workers' comp search.
+  const market = MARKET_WORDS[p.line ?? "peo"];
   // Each PEO's composer read (peo_send_context): its people with an email; "failed" when it couldn't be read, which stops that PEO alone.
   const [contexts, setContexts] = useState<Record<string, PeoSendContext | "failed">>({});
   const [subject, setSubject] = useState(peoSendSubject(p.companyName, p.fileId, p.certified.version));
@@ -221,13 +226,13 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="min-h-11 px-4 rounded-md border border-primary text-primary text-sm font-medium">
-        {p.openLabel ?? "Send to several PEOs"}
+        {p.openLabel ?? `Send to several ${market.many}`}
       </button>
     );
   }
   return (
     // basis-full: where this sits in a wrapping row (Choose PEOs, beside a panel's heading) it takes the row under the heading, not a column beside it. Anywhere else the class does nothing.
-    <section aria-label="Send to several PEOs" className="basis-full border border-border rounded-md p-3 space-y-3 text-sm">
+    <section aria-label={`Send to several ${market.many}`} className="basis-full border border-border rounded-md p-3 space-y-3 text-sm">
       {step !== "done" && choices.length > 0 && <MailboxForWriting returnTo={p.returnTo} />}
       {step !== "done" && choices.length > 0 && blockers.length > 0 && (
         // What the database would refuse after the click, said before it (D-1910): each is in the database's own words, and Send waits until none is left.
@@ -240,7 +245,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
       )}
       {step === "choose" && choices.length === 0 ? (
         // No PEO has a published profile (a PEO starts as an empty draft until Nevermore publishes it, #236, D-1787): say so and who to ask, rather than a note box and a Review with nothing to choose.
-        <p role="status" className="text-muted-foreground">No PEO can be chosen yet: none has a published profile. Ask Nevermore to publish the PEOs you quote with.</p>
+        <p role="status" className="text-muted-foreground">{`No ${market.one} can be chosen yet: none has a published profile. Ask Nevermore to publish the ${market.many} you quote with.`}</p>
       ) : step === "choose" ? (
         <>
           <ul className="space-y-2">
@@ -278,8 +283,8 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
           </label>
           {noneAuthorized && (
             <p className="text-sm">
-              {`${employer} hasn't authorized a PEO yet.`}{" "}
-              <button type="button" onClick={() => void ask("", askToAddAnyPeo(choices.map((c) => c.peo)))} className="text-primary underline underline-offset-2">{`Ask ${employer}`}</button>
+              {`${employer} hasn't authorized ${market.a} yet.`}{" "}
+              <button type="button" onClick={() => void ask("", askToAddAnyPeo(choices.map((c) => c.peo), p.line ?? "peo"))} className="text-primary underline underline-offset-2">{`Ask ${employer}`}</button>
             </p>
           )}
           <button type="button" disabled={noneAuthorized} onClick={() => setStep("review")} className="min-h-11 px-4 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-60">Review</button>
@@ -300,7 +305,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
               const plan = planBundle(sourceOf(c));
               const items = plan.missing.map((m) => m.label);
               const stop = stopOf(c);
-              const registered = registeredElsewhereWords(elsewhere, c.peo);
+              const registered = registeredElsewhereWords(elsewhere, c.peo, p.line);
               return (
                 <li key={c.peo}>
                   <article aria-labelledby={`${id}-${c.entry.peo.id ?? c.peo}`} className="rounded-md bg-muted p-2 space-y-0.5">
@@ -328,7 +333,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
               className="min-h-11 px-4 inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-60"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-              {`Send to ${going.length} PEO${going.length === 1 ? "" : "s"}`}
+              {`Send to ${going.length} ${going.length === 1 ? market.one : market.many}`}
             </button>
             <button type="button" disabled={busy} onClick={() => setStep("choose")} className="min-h-11 px-4 rounded-md border border-border">Back</button>
           </div>

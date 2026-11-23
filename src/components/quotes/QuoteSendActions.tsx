@@ -1,3 +1,4 @@
+import { lineOf } from "@/data/lines";
 import { useState } from "react";
 import FollowUpOrWithdraw from "@/components/advisor/FollowUpOrWithdraw";
 import RecordSendPrompt from "@/components/advisor/RecordSendPrompt";
@@ -44,6 +45,7 @@ export function QuoteSendActions({ request, messages, needs, companyName, return
       <div className="space-y-2">
         <SendToPeo
           sessionId={detail.id}
+          line={lineOf(detail.line)}
           peo={peo.name}
           label="Send again"
           companyName={companyName}

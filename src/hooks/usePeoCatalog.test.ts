@@ -21,6 +21,25 @@ describe("usePeoCatalog", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
+  // Catches: a carrier offered where a PEO is chosen (the intake's PEO Match, a PEO search's send), which every screen written before lines would do if the
+  // catalog simply grew; or a workers' comp search offered PEOs to send to.
+  it("gives the markets of the line asked for: PEOs unless a line is named, and never one of another line", async () => {
+    rpcResult = {
+      data: [
+        { id: 1, name: "ADP TotalSource", line: "peo", profile: null },
+        { id: 9, name: "Granite Ridge Mutual", line: "workers_comp", profile: null },
+        { id: 5, name: "TriNet", profile: null },
+      ],
+      error: null,
+    };
+    const peos = renderHook(() => usePeoCatalog());
+    await waitFor(() => expect(peos.result.current.status).toBe("ready"));
+    expect(peos.result.current.peos.map((p) => p.name)).toEqual(["ADP TotalSource", "TriNet"]);
+    const carriers = renderHook(() => usePeoCatalog(true, "workers_comp"));
+    await waitFor(() => expect(carriers.result.current.status).toBe("ready"));
+    expect(carriers.result.current.peos.map((p) => p.name)).toEqual(["Granite Ridge Mutual"]);
+  });
+
   it("reads the PEOs from the database, alphabetically as it returns them, with each one's profile in use", async () => {
     rpcResult = {
       data: [

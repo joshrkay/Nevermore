@@ -58,6 +58,28 @@ describe("SendToPeo", () => {
     await waitFor(() => expect(sendToPeo).toHaveBeenCalledTimes(1));
   });
 
+  // Catches: an advisor sending to a carrier warned that another firm registered the employer "with this PEO" (ADR 0029).
+  it("says another firm registered this employer with this carrier, on a workers' comp search", async () => {
+    loadPeoSendContext.mockResolvedValue(CONNECTED);
+    fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    loadRegisteredElsewhere.mockResolvedValue([{ peo: "Granite Ridge Mutual", registered_at: "2026-11-03T15:00:00Z" }]);
+    render(<SendToPeo {...props} peo="Granite Ridge Mutual" line="workers_comp" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send to Granite Ridge Mutual" }));
+    const form = await screen.findByRole("form", { name: "Send to Granite Ridge Mutual" });
+    expect(await within(form).findByText("Another firm registered this employer with this carrier on Nov 3.")).toBeInTheDocument();
+    expect(form).not.toHaveTextContent("PEO");
+  });
+
+  // Catches: a carrier's contacts that can't be read reported as "the PEO's contacts" (ADR 0029).
+  it("says it couldn't load the carrier's contacts, on a workers' comp search", async () => {
+    // A dropped network has no words for people, so the composer says its own.
+    loadPeoSendContext.mockRejectedValue(new TypeError("Failed to fetch"));
+    fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    render(<SendToPeo {...props} peo="Granite Ridge Mutual" line="workers_comp" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Send to Granite Ridge Mutual" }));
+    expect(await screen.findByText("We couldn't load the carrier's contacts.")).toBeInTheDocument();
+  });
+
   // Break caught: a send that goes to nobody the advisor chose, without their note, or skips the bundle link; or a contact picked and a typed
   // address where only one reaches the PEO.
   it("sends to the people picked from the PEO's contacts and typed, with the cover note and the bundle link", async () => {

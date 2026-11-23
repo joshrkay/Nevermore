@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Seam 2 (D-13): the employer's boxes for which PEOs may receive their packet (M-1.1, D-608), with the database faked at its API module.
 const loadPeoAuthorizations = vi.fn();
 const setPeoAuthorization = vi.fn();
+const loadIntakeLine = vi.fn();
 vi.mock("@/lib/peoAuthorizationsApi", () => ({
   loadPeoAuthorizations: (...a: unknown[]) => loadPeoAuthorizations(...a),
   setPeoAuthorization: (...a: unknown[]) => setPeoAuthorization(...a),
+  loadIntakeLine: (...a: unknown[]) => loadIntakeLine(...a),
 }));
 
 const { default: PacketRecipients } = await import("./PacketRecipients");
@@ -21,6 +23,62 @@ describe("PacketRecipients", () => {
   beforeEach(() => {
     loadPeoAuthorizations.mockReset();
     setPeoAuthorization.mockReset();
+    loadIntakeLine.mockReset();
+    loadIntakeLine.mockResolvedValue("peo");
+  });
+
+  // ADR 0029. Break caught: an employer on a workers' comp intake asked "Which PEOs may receive your packet?" over a list of carriers, and told that ticking
+  // records "the PEO you tick".
+  it("asks about carriers on a workers' comp intake, in every line of its wording", async () => {
+    loadIntakeLine.mockResolvedValue("workers_comp");
+    loadPeoAuthorizations.mockResolvedValue([{ peo: "Granite Ridge Mutual", state: "not_asked", signedAt: null, wordingVersion: null }]);
+    render(<PacketRecipients sessionId="s1" />);
+    const group = await screen.findByRole("group", { name: "Which workers' comp carriers may receive your packet?" });
+    expect(within(group).getByRole("checkbox", { name: "Granite Ridge Mutual" })).not.toBeChecked();
+    expect(group.textContent).toMatch(/the carrier you tick/);
+    expect(group.textContent).not.toMatch(/PEO/);
+    expect(loadIntakeLine).toHaveBeenCalledWith("s1");
+  });
+
+  // Break caught: the PEO question lost on a PEO intake, or the whole list failing because the intake's line could not be read (a database with no lines yet).
+  it("asks about PEOs on a PEO intake, and when the intake's line can't be read", async () => {
+    loadPeoAuthorizations.mockResolvedValue(states);
+    const first = render(<PacketRecipients sessionId="s1" />);
+    expect(await screen.findByRole("group", { name: "Which PEOs may receive your packet?" })).toBeInTheDocument();
+    first.unmount();
+    loadIntakeLine.mockRejectedValue(new Error("column chamber_sessions.line does not exist"));
+    render(<PacketRecipients sessionId="s1" />);
+    const group = await screen.findByRole("group", { name: "Which PEOs may receive your packet?" });
+    expect(await within(group).findByRole("checkbox", { name: "TriNet" })).toBeChecked();
+  });
+
+  // ADR 0029. Break caught: an employer on a workers' comp intake, whose list of carriers failed to load, told "We couldn't load the PEOs".
+  it("says it couldn't load the carriers when a workers' comp intake's list can't be read", async () => {
+    loadIntakeLine.mockResolvedValue("workers_comp");
+    loadPeoAuthorizations.mockRejectedValue(new Error("down"));
+    render(<PacketRecipients sessionId="s1" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't load the carriers. Check your connection and try again.");
+  });
+
+  // ADR 0029. Break caught: the words of the last intake shown (a workers' comp one) kept for another intake whose line could not be read: an employer on a
+  // PEO intake asked about carriers.
+  it("goes back to a PEO intake's words for an intake whose line can't be read, after showing a workers' comp one", async () => {
+    loadIntakeLine.mockResolvedValueOnce("workers_comp");
+    loadPeoAuthorizations.mockResolvedValue(states);
+    const shown = render(<PacketRecipients sessionId="s1" />);
+    expect(await screen.findByRole("group", { name: "Which workers' comp carriers may receive your packet?" })).toBeInTheDocument();
+    loadIntakeLine.mockRejectedValue(new Error("down"));
+    shown.rerender(<PacketRecipients sessionId="s2" />);
+    expect(await screen.findByRole("group", { name: "Which PEOs may receive your packet?" })).toBeInTheDocument();
+  });
+
+  // Break caught: the profile's boxes, one group for each company and headed by its name, all headed by the same question, so the employer can't tell
+  // which company a box is for.
+  it("is headed by the name the screen gives it, in place of the line's question", async () => {
+    loadPeoAuthorizations.mockResolvedValue(states);
+    render(<PacketRecipients sessionId="s1" heading="Reyes Bakery" />);
+    expect(await screen.findByRole("group", { name: "Reyes Bakery" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Which PEOs may receive your packet?" })).toBeNull();
   });
 
   // Break caught: the employer can't see which PEOs they authorized; a withdrawn PEO shows ticked; the wording is shown without saying it is a draft.

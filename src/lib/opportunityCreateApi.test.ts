@@ -57,6 +57,21 @@ describe("createOpportunity", () => {
     });
   });
 
+  // Catches: a workers' comp search saved as a PEO search because its line never reached the database.
+  it("sends the line of a workers' comp search", async () => {
+    rpc.mockResolvedValue({ data: { record: { id: "o1", version: 1, stage: "qualifying" } }, error: null });
+    await createOpportunity("f1", "a1", { ...input, line: "workers_comp" });
+    expect(rpc).toHaveBeenCalledWith("opportunity_create", expect.objectContaining({ p_line: "workers_comp" }));
+  });
+
+  // The site is deployed apart from the database (docs/SUPABASE_SETUP.md): until the migration that adds lines is pushed, the database has no such argument.
+  // Catches: every new opportunity refused on that database ("function not found") because a PEO search named an argument it does not need.
+  it("names no line for a PEO search, so a database that has no lines yet still takes it", async () => {
+    rpc.mockResolvedValue({ data: { record: { id: "o1", version: 1, stage: "qualifying" } }, error: null });
+    await createOpportunity("f1", "a1", { ...input, line: "peo" });
+    expect(Object.keys(rpc.mock.calls[0][1])).not.toContain("p_line");
+  });
+
   // Catches: Start the renewal's renewal not sent with the save (the opportunity is then made and the renewal never linked: D-449), or sent as a second call.
   it("sends the renewal it starts in the same call", async () => {
     rpc.mockResolvedValue({ data: { record: { id: "o1", version: 1, stage: "qualifying" } }, error: null });

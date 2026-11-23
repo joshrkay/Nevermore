@@ -1,6 +1,8 @@
 // A subset of PostgREST. The prospect path uses select, eq/neq, order, limit, POST/PATCH and scalar rpc;
 // the rest (gt/gte/lt/lte, is and in filters, offset, DELETE, void and set-returning rpc) is implemented
-// but no spec exercises it. Every request runs in a transaction as the database role and JWT claims of
+// but no spec exercises it. A read can embed the one row a foreign key of its table points to
+// (`select=*,document:quote_request_message_attachments(id,file_name)`, see embedSql); no other embedding is taken.
+// Every request runs in a transaction as the database role and JWT claims of
 // its token, and its request headers (see withRequest), so row security, grants and triggers are the real ones. Query features
 // beyond the subset answer 400 E2E_UNSUPPORTED rather than being guessed at.
 import pg from "pg";
@@ -69,6 +71,58 @@ function parsePrefer(header) {
 function parseSelect(url) {
   const list = (url.searchParams.get("select") || "*").split(",").map((column) => column.trim());
   return list.map((column) => (column === "*" ? "*" : quote(column, "select column"))).join(", ");
+}
+
+/** `a, b:t(c, d), e` -> ["a", "b:t(c, d)", "e"]: the commas inside an embedded table's own list are not the select's. */
+function splitSelect(select) {
+  const items = [];
+  let current = "";
+  let depth = 0;
+  for (const char of select) {
+    if (char === "(") depth++;
+    if (char === ")") depth--;
+    if (char === "," && depth === 0) {
+      items.push(current.trim());
+      current = "";
+    } else current += char;
+  }
+  items.push(current.trim());
+  return items;
+}
+
+const EMBED = /^(?:([A-Za-z_][A-Za-z0-9_]*):)?([A-Za-z_][A-Za-z0-9_]*)\(([^()]*)\)$/;
+
+/**
+ * One embedded table as a column of the read: `alias:other(col, col)`, where a row of `table` points to one row of `other` through exactly one single-column
+ * foreign key (many-to-one, which PostgREST answers as an object, or null). The inner read is made by the same role in the same transaction, so the other table's
+ * row security and grants decide what comes back, as they do in PostgREST. Anything else (a table that points here, two foreign keys, an embed inside an embed,
+ * a filter on the embed) is not guessed at.
+ */
+async function embedSql(db, table, item) {
+  const [, alias, other, inner] = EMBED.exec(item) ?? [];
+  if (!other) throw unsupported(`select item "${item}" (only plain column names, and alias:table(columns) for a row this table points to)`);
+  const columns = inner.split(",").map((column) => column.trim());
+  const list = columns.map((column) => (column === "*" ? "*" : quote(column, "embedded select column"))).join(", ");
+  const { rows } = await db.query(
+    `SELECT a.attname AS from_column, f.attname AS to_column
+       FROM pg_constraint c
+       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+       JOIN pg_attribute f ON f.attrelid = c.confrelid AND f.attnum = c.confkey[1]
+      WHERE c.contype = 'f' AND cardinality(c.conkey) = 1
+        AND c.conrelid = to_regclass($1) AND c.confrelid = to_regclass($2)`,
+    [`public.${quote(table, "table")}`, `public.${quote(other, "embedded table")}`],
+  );
+  if (rows.length !== 1) throw unsupported(`embedding "${other}" in "${table}" (${rows.length} single-column foreign keys from one to the other; exactly one is taken)`);
+  return `(SELECT row_to_json(e) FROM (SELECT ${list} FROM public.${quote(other, "embedded table")} o
+            WHERE o.${quote(rows[0].to_column, "column")} = base.${quote(rows[0].from_column, "column")}) e) AS ${quote(alias ?? other, "embed name")}`;
+}
+
+/** The select list of a read of `table`, whose rows are named `base`: plain columns, and embedded rows (embedSql). */
+async function readSelect(db, url, table) {
+  const items = splitSelect(url.searchParams.get("select") || "*");
+  const parts = [];
+  for (const item of items) parts.push(item === "*" ? "base.*" : item.includes("(") ? await embedSql(db, table, item) : `base.${quote(item, "select column")}`);
+  return parts.join(", ");
 }
 
 /** `in.(a,b,"c,d")` -> ["a", "b", "c,d"]. */
@@ -185,9 +239,10 @@ export function createRest({ pool, log = () => {} }) {
   async function readTable(ctx, url, table, wantsObject) {
     const { values, param } = makeParams();
     const where = parseFilters(url, param);
-    const sql = `SELECT ${parseSelect(url)} FROM public.${quote(table, "table")}${where.length ? ` WHERE ${where.join(" AND ")}` : ""}${parseOrder(url)}${parsePaging(url, param)}`;
+    const from = ` FROM public.${quote(table, "table")} base${where.length ? ` WHERE ${where.join(" AND ")}` : ""}${parseOrder(url)}${parsePaging(url, param)}`;
     const offset = Number(url.searchParams.get("offset") ?? 0);
     return withRequest(pool, ctx, async (db) => {
+      const sql = `SELECT ${await readSelect(db, url, table)}${from}`;
       const { rows } = await db.query(aggregate(`(${sql})`), values);
       return rowsResponse(rows[0], { status: 200, wantsObject, range: contentRange(rows[0].n, offset) });
     });

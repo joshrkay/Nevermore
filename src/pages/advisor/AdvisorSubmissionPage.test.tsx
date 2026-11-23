@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
+import { CARRIER_SEND_NOTICE } from "@/data/legalWording";
 import type { Manuscript } from "@/data/manuscript";
 import type { Supplement } from "@/data/peoSupplement";
 import { workersCompFilename, type WorkersCompApplication } from "@/data/workersCompApplication";
@@ -91,6 +92,7 @@ const signedData = { ...EMPTY_CHAMBER_DATA, company_name: "Signed Co", employee_
 
 const detail = (over: Partial<SubmissionDetail> = {}): SubmissionDetail => ({
   id: "s1",
+  line: "peo",
   userId: "prospect-1",
   fileId: "EAA-2026-S1",
   intakeStatus: "submitted",
@@ -2305,6 +2307,23 @@ describe("AdvisorSubmissionPage", () => {
         await waitFor(() => expect(api.recordQuoteSend).toHaveBeenCalledWith("s1", "Justworks", "2026-11-11"));
         expect(api.recordQuoteSend).toHaveBeenCalledTimes(1);
         await waitFor(() => expect(api.loadSubmission).toHaveBeenCalledTimes(2));
+      });
+
+      // Catches (ADR 0029): a workers' comp submission shown the PEOs to send to (the database refuses each) and none of its carriers, or a send to a
+      // carrier composed under words that say PEO.
+      it("lists the carriers of a workers' comp submission, and no PEO, and composes a send to one in a carrier's words", async () => {
+        peoCatalogRows = [...catalog(), { id: 9, name: "Granite Ridge Mutual", line: "workers_comp", profile: { version: 1, needed_to_quote: ["company_name"], sources: { answers: sourced } } }];
+        api.loadSubmission.mockResolvedValue(detail({ line: "workers_comp", pipelineStatus: "ready_for_market", currentVersion: 1, submission: { ...detail().submission!, version: 1 } }));
+        api.fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "adv@example.com" });
+        peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "adv@example.com" }, contacts: [], reply_address: null });
+        renderPage();
+        const needs = await panel();
+        const carrier = (await within(needs).findByRole("heading", { name: "Granite Ridge Mutual" })).closest("article")!;
+        for (const peo of ["Justworks", "TriNet"]) expect(within(needs).queryByRole("heading", { name: peo })).toBeNull();
+        fireEvent.click(within(carrier).getByRole("button", { name: "Send to Granite Ridge Mutual" }));
+        const form = await within(carrier).findByRole("form", { name: "Send to Granite Ridge Mutual" });
+        expect(await within(form).findByText("Added under your note; you can't change it. The carrier gets a link, never the files.")).toBeInTheDocument();
+        expect(within(form).getByText(CARRIER_SEND_NOTICE)).toBeInTheDocument();
       });
 
       // Catches (M-2.1): no way to send a PEO its bundle from the submission page, a send of another PEO's bundle or another version, or a link issued

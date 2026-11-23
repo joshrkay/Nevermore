@@ -656,3 +656,80 @@ describe("SendToSeveralPeos: what stops a send, said before it is pressed", () =
     expect(await within(region).findByRole("button", { name: /^Send to \d PEO/ })).toBeEnabled();
   });
 });
+
+describe("SendToSeveralPeos: on a workers' comp search it is carriers, in every word (ADR 0029)", () => {
+  const carrier = (id: number, name: string) => ({ id, name, line: "workers_comp", profile: { version: 1, needed_to_quote: ["company_name"], sources: { answers: sourced } } });
+  const carriers = parsePeoCatalog([carrier(8, "Granite Ridge Mutual"), carrier(9, "Summit Casualty")]);
+  const people: Record<string, { name: string; role: string | null; email: string }[]> = {
+    "Granite Ridge Mutual": [{ name: "Uma Ward", role: null, email: "uw@granite.example" }],
+    "Summit Casualty": [{ name: "Ines Roy", role: null, email: "ines@summit.example" }],
+  };
+  const said = (...names: string[]) => ["Granite Ridge Mutual", "Summit Casualty"].map((peo) => ({ peo, state: names.includes(peo) ? "authorized" : "not_asked", signedAt: null, wordingVersion: null }));
+  const openCarriers = async (extra: Record<string, unknown> = {}) => {
+    render(<SendToSeveralPeos {...props} catalog={carriers} line="workers_comp" {...extra} />);
+    fireEvent.click(screen.getByRole("button", { name: "Send to several carriers" }));
+    return screen.findByRole("region", { name: "Send to several carriers" });
+  };
+  beforeEach(() => {
+    fetchMyMailbox.mockReset().mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
+    loadPeoSendContext.mockReset().mockImplementation(async (_s: string, peo: string) => ({ mailbox: { connected: true, address: "sam@acme.example" }, contacts: people[peo] ?? [], reply_address: null }));
+    loadPeoAuthorizations.mockReset().mockResolvedValue(said("Granite Ridge Mutual", "Summit Casualty"));
+    loadRegisteredElsewhere.mockReset().mockResolvedValue([]);
+    fetchFirmApprovedToSend.mockReset().mockResolvedValue(true);
+    requestInformation.mockReset().mockResolvedValue(undefined);
+    sendToPeo.mockReset().mockImplementation(async (s: { peo: string }) => ({ quoteRequestId: s.peo.length, messageId: 40 + s.peo.length }));
+    issueBundleLink.mockReset().mockResolvedValue({ id: 9, token: "t", url: "https://app.example/b/t", expiresAt: "2026-12-16T00:00:00Z", version: 3, notIncluded: [] });
+  });
+
+  // Catches: the button that sends counting "PEOs" on a workers' comp search, or one carrier counted as "1 carriers".
+  it("counts the carriers it is about to send to, one or several", async () => {
+    const region = await openCarriers();
+    fireEvent.change(await within(region).findByLabelText("Your note"), { target: { value: "Here it is." } });
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(2));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    expect(await within(region).findByRole("button", { name: "Send to 2 carriers" })).toBeInTheDocument();
+    expect(region).not.toHaveTextContent("PEO");
+  });
+
+  // Catches: one carrier counted as "1 carriers" (the two words swapped).
+  it("counts one carrier as one", async () => {
+    loadPeoAuthorizations.mockResolvedValue(said("Granite Ridge Mutual"));
+    const region = await openCarriers();
+    fireEvent.change(await within(region).findByLabelText("Your note"), { target: { value: "Here it is." } });
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(2));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    expect(await within(region).findByRole("button", { name: "Send to 1 carrier" })).toBeInTheDocument();
+  });
+
+  // Catches: the review of a carrier another firm already registered this employer with warning of "this PEO".
+  it("in the review, says another firm registered this employer with this carrier", async () => {
+    loadRegisteredElsewhere.mockResolvedValue([{ peo: "Summit Casualty", registered_at: "2026-11-03T15:00:00Z" }]);
+    const region = await openCarriers();
+    fireEvent.change(await within(region).findByLabelText("Your note"), { target: { value: "Here it is." } });
+    await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(2));
+    fireEvent.click(within(region).getByRole("button", { name: "Review" }));
+    const summit = await within(region).findByRole("article", { name: "Summit Casualty" });
+    expect(await within(summit).findByText("Another firm registered this employer with this carrier on Nov 3.")).toBeInTheDocument();
+  });
+
+  // Catches: a workers' comp search with no carrier listed told that no PEO can be chosen.
+  it("says no carrier can be chosen yet when none has a published profile", async () => {
+    render(<SendToSeveralPeos {...props} catalog={[]} line="workers_comp" startOpen />);
+    const region = await screen.findByRole("region", { name: "Send to several carriers" });
+    expect(within(region).getByText("No carrier can be chosen yet: none has a published profile. Ask Nevermore to publish the carriers you quote with.")).toBeInTheDocument();
+  });
+
+  // Catches: the employer of a workers' comp intake said not to have authorized "a PEO", and asked, in a message they read, to tick a PEO.
+  it("says the employer hasn't authorized a carrier yet, and asks them to tick a carrier", async () => {
+    loadPeoAuthorizations.mockResolvedValue(said());
+    const region = await openCarriers();
+    expect(await within(region).findByText("Lucia hasn't authorized a carrier yet.")).toBeInTheDocument();
+    fireEvent.click(within(region).getByRole("button", { name: "Ask Lucia" }));
+    await waitFor(() => expect(requestInformation).toHaveBeenCalledTimes(1));
+    const message = requestInformation.mock.calls[0][1] as string;
+    expect(message).toMatch(/^We'd like to send your packet to a carrier\./);
+    expect(message).toMatch(/Granite Ridge Mutual, Summit Casualty/);
+    expect(message).toMatch(/Nothing goes to a carrier until you do\.$/);
+    expect(message).not.toMatch(/PEO/);
+  });
+});

@@ -43,6 +43,17 @@ describe("buildSupplementPdf: Additional questions from <PEO>", () => {
     ]) expect(t).toContain(expected);
   });
 
+  // Catches: a carrier's own supplement telling it that "no other PEO" receives its answers (ADR 0029): a document a carrier opens never calls it a PEO.
+  it("says no other carrier receives a carrier's answers, and says PEO nowhere", async () => {
+    const carriers = buildSupplement({
+      peo: { id: 9, name: "Granite Ridge Mutual", line: "workers_comp" }, questions: OASIS, certified, fileId: "EAA-2026-0007", version: 3, companyName: "Meridian Creative Group",
+    });
+    const t = await pdfText(buildSupplementPdf(carriers, { generatedOn: GENERATED, compress: false }).blob);
+    expect(t).toContain("For Granite Ridge Mutual only.");
+    expect(t).toContain("no other carrier");
+    expect(t).not.toMatch(/PEO/);
+  });
+
   it("never carries another PEO's questions or answers", async () => {
     const t = await text({ id: 9, name: "Oasis" }, OASIS);
     expect(t).toContain("Do you allow pets at work?");

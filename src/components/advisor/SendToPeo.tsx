@@ -4,6 +4,7 @@ import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { DRAFT_WORDING_NOTICE } from "@/data/legalWording";
+import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
 import { peoSendBlockPreview, peoSendSubject } from "@/data/peoSend";
 import { quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
 import { loadPeoSendContext, sendToPeo, type PeoSend, type PeoSendContext } from "@/lib/peoSendApi";
@@ -33,6 +34,8 @@ export interface SendToPeoProps {
   onSent: () => void;
   /** The advisor chose to send it from their own mail instead: the page offers to record that send (the existing recorded send, M-2.5). */
   onSendYourself: () => void;
+  /** What the intake is for (ADR 0029): a PEO intake unless said. On a workers' comp intake `peo` is a carrier, and the words and the notice say so. */
+  line?: QuoteLine;
 }
 
 /** Each address typed, split on commas, spaces and line breaks. */
@@ -70,14 +73,14 @@ const SendToPeo = (p: SendToPeoProps) => {
     let cancelled = false;
     loadPeoSendContext(p.sessionId, p.peo).then(
       (c) => !cancelled && setContext(c),
-      (err) => !cancelled && setProblem(failureWords(err, "We couldn't load the PEO's contacts.")),
+      (err) => !cancelled && setProblem(failureWords(err, `We couldn't load the ${MARKET_WORDS[p.line ?? "peo"].one}'s contacts.`)),
     );
     // Unread, there is simply no warning: the send never waits on it.
-    loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(registeredElsewhereWords(rows, p.peo)), () => undefined);
+    loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(registeredElsewhereWords(rows, p.peo, p.line)), () => undefined);
     return () => {
       cancelled = true;
     };
-  }, [open, p.sessionId, p.peo]);
+  }, [open, p.sessionId, p.peo, p.line]);
 
   const send = async () => {
     setBusy(true);
@@ -142,9 +145,9 @@ const SendToPeo = (p: SendToPeoProps) => {
             <textarea value={note} maxLength={50000} rows={5} onChange={(e) => setNote(e.target.value)} className="w-full bg-muted border border-border rounded-md px-3 py-2" />
           </label>
           <section aria-label="Added under your note" className="rounded-md bg-muted p-2 text-xs text-muted-foreground space-y-0.5">
-            <p className="font-medium">Added under your note; you can't change it. The PEO gets a link, never the files.</p>
+            <p className="font-medium">{`Added under your note; you can't change it. The ${MARKET_WORDS[p.line ?? "peo"].one} gets a link, never the files.`}</p>
             {update && <p>{`What changed since version ${p.updateFrom}: each answer by its name and the census by count, never a value`}</p>}
-            {peoSendBlockPreview({ fileId: p.fileId, version: p.version, openItems: p.openItems }).map((line) => <p key={line}>{line}</p>)}
+            {peoSendBlockPreview({ fileId: p.fileId, version: p.version, openItems: p.openItems, line: p.line }).map((line) => <p key={line}>{line}</p>)}
             <p className="italic">{DRAFT_WORDING_NOTICE}</p>
           </section>
           {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
