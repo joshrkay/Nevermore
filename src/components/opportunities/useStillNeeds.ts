@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { findPeo } from "@/data/peoCatalog";
 import { counted, lastCertifiedVersion, peoCompleteness, type NeededItem } from "@/data/peoCompleteness";
 import { verifiedFieldsOf } from "@/data/advisor";
+import type { QuoteLine } from "@/data/lines";
 import { usePeoCatalog } from "@/hooks/usePeoCatalog";
 import { loadSubmission } from "@/lib/advisorApi";
 
@@ -15,9 +16,10 @@ export const stillNeedsWords = (items: readonly NeededItem[]): string => (items.
  * requirement profiles. `of(peo)` is the words for one PEO, matched to its profile by name ignoring case; "Not known" when the PEO has no profile or when the
  * certified version cannot say what it held. Nothing is read unless `enabled` (there are quote requests to speak for).
  */
-export function useStillNeeds(firmId: string | null, submissionId: string | null, enabled: boolean) {
+export function useStillNeeds(firmId: string | null, submissionId: string | null, enabled: boolean, line: QuoteLine = "peo") {
   const on = enabled && submissionId !== null && firmId !== null;
-  const catalog = usePeoCatalog(on);
+  // The markets of the opportunity's own line (ADR 0029): PEOs for a PEO search, carriers for a workers' comp search.
+  const catalog = usePeoCatalog(on, line);
   // Kept apart from the page's own queries: it is the submission's whole read, asked again when the window gets focus but not with every note added.
   const submission = useQuery({ queryKey: ["opportunity-needs", firmId, submissionId], queryFn: () => loadSubmission(submissionId as string, false), enabled: on, retry: false, staleTime: 30_000 });
   const retrySubmission = submission.refetch;

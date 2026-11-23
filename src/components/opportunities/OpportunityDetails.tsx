@@ -8,6 +8,7 @@ import { accountKey } from "@/components/accounts/useAccountQueries";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FormActions, SaveConflict, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { LINE_LABELS, lineOf } from "@/data/lines";
 import { OPPORTUNITY_SOURCES } from "@/data/opportunityFields";
 import { formatDay, NOT_GIVEN, STAGE_LABELS } from "@/data/accountPage";
 import { dollarsWords, editOf, formOfEditable, formOfOpportunity, opportunityFieldsSchema, type OpportunityForm } from "@/data/opportunityPage";
@@ -191,6 +192,8 @@ export function OpportunityDetailsPanel({ firmId, page, onSaved }: {
         <dl>
           <Row label="Account"><Link to={accountPath(account.id)} className="text-primary underline underline-offset-2 hover:text-primary/90">{account.name}</Link></Row>
           <Row label="Stage">{STAGE_LABELS[opportunity.stage]}</Row>
+          {/* What the search is for (ADR 0029): chosen when the opportunity was made and never changed, so it is shown and never edited. */}
+          <Row label="Quoting">{LINE_LABELS[lineOf(opportunity.line)]}</Row>
           <Row label="Target start"><Given value={opportunity.targetStart ? formatDay(opportunity.targetStart) : null} /></Row>
           <Row label="Employees"><Given value={opportunity.employees === null ? null : opportunity.employees.toLocaleString("en-US")} /></Row>
           <Row label="Expected close"><Given value={opportunity.expectedClose ? formatDay(opportunity.expectedClose) : null} /></Row>

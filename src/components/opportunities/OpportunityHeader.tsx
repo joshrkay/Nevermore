@@ -5,6 +5,7 @@ import { contactPath } from "@/components/accounts/accountColumns";
 import { PlaceholderLine } from "@/components/workspace/states";
 import { formatDay, STAGE_LABELS } from "@/data/accountPage";
 import { employeeCountWords, nextStepWords, stageBar } from "@/data/opportunityPage";
+import { lineOf } from "@/data/lines";
 import type { OpportunityPage } from "@/lib/opportunityPageApi";
 
 /**
@@ -22,7 +23,7 @@ export function OpportunityHeader({ page, email, onMarkWonOrLost }: {
   const { opportunity: o, mainContact, owner, intake, contacts } = page;
   // Who the intake waits on: the prospect by the name they gave (gone once the intake is submitted), else the contact made from them, else who certified it.
   const waitingOn = intake?.prospectName ?? contacts.find((c) => c.fillsInIntake)?.name ?? intake?.certifiedBy ?? null;
-  const guidance = nextStepWords(o.stage, intake?.pipelineStatus ?? null, waitingOn, mainContact?.name ?? null);
+  const guidance = nextStepWords(o.stage, intake?.pipelineStatus ?? null, waitingOn, mainContact?.name ?? null, lineOf(o.line));
   const places = stageBar(o.stage);
   return (
     <header className="mb-6">

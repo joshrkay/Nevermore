@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { lineOf, type QuoteLine } from "@/data/lines";
 import type { Database, Json } from "@/integrations/supabase/types";
 import type { ChamberData } from "@/data/chamberTypes";
 import { parseChamberData } from "@/data/chamberValidation";
@@ -231,6 +232,8 @@ export interface NeedsAction {
 export interface SubmissionDetail {
   id: string;
   userId: string;
+  /** What the intake is for (ADR 0029): its opportunity's line. A PEO intake when the row names none. */
+  line: QuoteLine;
   /** The File ID, assigned by the database at the first certification; null for a draft never certified. */
   fileId: string | null;
   intakeStatus: string;
@@ -429,6 +432,7 @@ export async function loadSubmission(id: string, opening = false): Promise<Submi
   return {
     id: row.id,
     userId: row.user_id,
+    line: lineOf(row.line),
     fileId: row.file_id ?? recorded?.file_id ?? null,
     intakeStatus: row.status,
     pipelineStatus: isPipelineStatus(workflow.data.status) ? workflow.data.status : "draft",
@@ -609,6 +613,13 @@ export interface QuoteOffer {
   unemployment?: QuoteUnemploymentCharge[] | null;
   medical?: QuoteMedicalRate[] | null;
   note?: string | null;
+  /**
+   * What a workers' comp quote holds in place of the fee, unemployment and medical (ADR 0029): the estimated annual premium and the minimum premium in dollars, and
+   * the experience modification the carrier applied (a factor, such as 0.92). The database refuses them on a PEO's quote, and a PEO's figures on a carrier's.
+   */
+  annualPremium?: number | null;
+  experienceMod?: number | null;
+  minimumPremium?: number | null;
 }
 
 /** A cost area's lines, or null when there are none: an empty list would read as quoted, and the database refuses it. */
@@ -629,6 +640,11 @@ export async function recordQuote(quoteRequestId: number, offer: QuoteOffer): Pr
     p_unemployment: lines(offer.unemployment),
     p_medical: lines(offer.medical),
     p_note: offer.note ?? null,
+    // The workers' comp figures are named only by a quote that holds one (ADR 0029): the site is deployed apart from the database, and a database that has no
+    // lines yet has no such arguments and would refuse every PEO quote that named them.
+    ...(offer.annualPremium != null || offer.experienceMod != null || offer.minimumPremium != null
+      ? { p_annual_premium: offer.annualPremium ?? null, p_experience_mod: offer.experienceMod ?? null, p_minimum_premium: offer.minimumPremium ?? null }
+      : {}),
   });
   if (error) fail(error, "Couldn't record the quote.");
   return data;
@@ -1114,6 +1130,8 @@ export async function saveManuscriptVersion(opts: {
 export interface PeoDirectoryEntry {
   id: number;
   name: string;
+  /** What this market quotes (ADR 0029): a PEO when not said, a carrier for workers' comp. */
+  line?: QuoteLine;
   listed: boolean;
   versions: ProfileVersion[];
 }
@@ -1140,7 +1158,8 @@ async function contactRows(versionIds: readonly number[]): Promise<Record<string
  */
 export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
   const [peos, versions] = await Promise.all([
-    supabase.from("peos").select("id, name, listed").order("name"),
+    // Every column, not a list of them: the market's line is one a database that has no lines yet does not have, and naming it would fail the whole read.
+    supabase.from("peos").select("*").order("name"),
     supabase.from("peo_profile_versions").select("*").order("version", { ascending: false }),
   ]);
   for (const r of [peos, versions]) if (r.error) fail(r.error, "Couldn't load the PEOs.");
@@ -1156,6 +1175,7 @@ export async function loadPeoDirectory(): Promise<PeoDirectoryEntry[]> {
     .map((p) => ({
       id: p.id,
       name: p.name,
+      line: lineOf((p as { line?: unknown }).line),
       listed: p.listed,
       versions: rows
         .filter((v) => Number(v.peo_id) === p.id)
@@ -1202,9 +1222,12 @@ export async function loadVersionContacts(versionIds: readonly number[]): Promis
   return new Map(versionIds.map((id) => [id, contactsOf(id, rows)]));
 }
 
-/** Adds a PEO, listed, with no profile. The database refuses a name already listed, in words to show. */
-export async function addPeo(name: string): Promise<{ id: number }> {
-  const { data, error } = await supabase.rpc("admin_add_peo", { p_name: name });
+/**
+ * Adds a market, listed, with no profile: a PEO, or a carrier for workers' comp when `line` says so (ADR 0029). The database refuses a name already listed, in
+ * words to show. The line is named only when it is not a PEO, the database's own default, so a database that has no lines yet still adds a PEO.
+ */
+export async function addPeo(name: string, line: QuoteLine = "peo"): Promise<{ id: number }> {
+  const { data, error } = await supabase.rpc("admin_add_peo", { p_name: name, ...(line !== "peo" ? { p_line: line } : {}) });
   if (error || !data) fail(error, "Couldn't add the PEO.");
   return data as { id: number };
 }

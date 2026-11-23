@@ -1,4 +1,5 @@
 // The words of the registration record (Q-2.1) and of the warning about a second submission (Q-2.2, D-604), slice 6.10.
+import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
 import { csvField, csvLines } from "@/lib/csv";
 import type { RegistrationStatement } from "@/lib/peoRegistrationsApi";
 
@@ -26,7 +27,8 @@ export const registrationDay = (at: string): string => new Date(at).toLocaleDate
  * The warning before a send (D-604): that another firm registered this employer with this PEO, and when; never who. It warns and never blocks.
  * Null when no other firm has.
  */
-export function registeredElsewhereWords(rows: readonly { peo: string; registered_at: string }[], peo: string): string | null {
+export function registeredElsewhereWords(rows: readonly { peo: string; registered_at: string }[], peo: string, line: QuoteLine = "peo"): string | null {
   const row = rows.find((r) => r.peo.toLowerCase() === peo.trim().toLowerCase());
-  return row ? `Another firm registered this employer with this PEO on ${registrationDay(row.registered_at)}.` : null;
+  // "this PEO", or "this carrier" on a workers' comp search (ADR 0029).
+  return row ? `Another firm registered this employer with this ${MARKET_WORDS[line].one} on ${registrationDay(row.registered_at)}.` : null;
 }

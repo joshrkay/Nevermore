@@ -3,6 +3,7 @@
 // it; a published version never changes, and the newest published one is the profile in use. The browser reads
 // the PEOs and their profiles in use through public.peo_catalog(), which never includes a PEO contact, and gives
 // anyone but an advisor a person at the PEO by their role only.
+import { lineOf } from "@/data/lines";
 import type { TemplateWorkbookRef, PeoCensusLayout } from "./censusExport";
 import type { DocumentCategory } from "./documentCategories";
 import type { PeoRecord } from "./peoCatalog";
@@ -227,6 +228,7 @@ export function parsePeoCatalog(raw: unknown): PeoRecord[] {
     return [{
       id: num(entry.id) ?? undefined,
       name: entry.name,
+      line: lineOf(entry.line),
       listed: entry.listed !== false,
       lastVerified: profile ? oldestCheck(profile) : null,
       profile,

@@ -67,6 +67,7 @@ const opportunity = {
   id: "o1", version: 4, accountId: "a1", ownerId: "u1", name: "January 2027 PEO search", targetStart: "2027-01-01", employees: 45, mainContactId: "c1",
   expectedClose: "2026-12-12", value: 7100 as number | null, source: "Referral" as string | null, referralPartner: null as { code: string; name: string } | null, nextStep: "Send PEO B the loss run" as string | null, submissionId: "i1" as string | null,
   createdAt: "2026-10-21T10:00:00+00:00", updatedAt: "2026-11-11T10:00:00+00:00", stage: "in_market" as Page["opportunity"]["stage"],
+  line: "peo" as Page["opportunity"]["line"],
 };
 const intake = {
   submissionId: "i1", fileId: "EAA-2026-0117", pipelineStatus: "sent_to_carrier" as string | null, certifiedBy: "Elena Marsh" as string | null, certifiedAt: "2026-10-28T10:00:00+00:00" as string | null,
@@ -237,6 +238,19 @@ describe("OpportunityPage: the stage bar", () => {
     renderPage();
     await screen.findByRole("heading", { level: 1 });
     expect(within(header()).getByText(words)).toBeInTheDocument();
+  });
+
+  // Catches: a workers' comp search told to send to a PEO, or said to be waiting for one, under its own stage bar (ADR 0029).
+  it.each([
+    [{ stage: "ready_to_send" as const }, { pipelineStatus: "ready_for_market" }, "Send to a carrier to move to In market"],
+    [{ stage: "in_market" as const }, {}, "Waiting for a carrier to quote"],
+  ])("says what would move a workers' comp search %j on in a carrier's words: %s", async (o, i, words) => {
+    client.getOpportunityPage.mockResolvedValue(page({ intake: { ...intake, ...i } }, { ...o, line: "workers_comp", name: "March 2027 workers' comp search" }));
+    renderPage();
+    await screen.findByRole("heading", { level: 1 });
+    expect(within(header()).getByText(words)).toBeInTheDocument();
+    // Nothing at the top of a workers' comp search says PEO.
+    expect(within(header()).queryByText(/PEO/)).not.toBeInTheDocument();
   });
 
   // Catches: a name taken from the wrong place: the prospect's first name, else the main contact's, else "the employer".
@@ -800,6 +814,18 @@ const invalidated = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c)
 
 describe("OpportunityPage: the details", () => {
   const value = (label: string) => within(panel("Details")).getByText(label, { selector: "dt" }).nextElementSibling as HTMLElement;
+
+  // Catches: nothing on the page saying what a search is for, so a workers' comp search and a PEO search of one account read the same.
+  it("says what is being quoted: a PEO, or workers' comp", async () => {
+    renderPage();
+    await screen.findByRole("region", { name: "Details" });
+    expect(value("Quoting")).toHaveTextContent("PEO");
+    cleanup();
+    client.getOpportunityPage.mockResolvedValue(page({}, { line: "workers_comp" }));
+    renderPage();
+    await screen.findByRole("region", { name: "Details" });
+    expect(value("Quoting")).toHaveTextContent("Workers' comp");
+  });
 
   // Catches: a detail D-428 names left out, shown by a code (the owner by id), or the stage and account offered for editing in the list.
   it("shows the account (linked), stage, target start, employees, expected close, value, source, next step and owner", async () => {
@@ -1481,12 +1507,30 @@ describe("OpportunityPage: the won or lost banner (D-426, D-472)", () => {
     expect(await screen.findByText("Commission: none expected recorded")).toBeInTheDocument();
   });
 
+  // Catches: a workers' comp search marked lost from a list that speaks of PEOs (the dialog is the page's, and the page knows the line: ADR 0029).
+  it("offers a workers' comp search's reasons in a carrier's words", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { line: "workers_comp", name: "March 2027 workers' comp search" }));
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Mark won or lost" }));
+    const d = within(dialog());
+    await userEvent.click(d.getByRole("radio", { name: /Lost/ }));
+    expect(within(d.getByLabelText("Reason")).getAllByRole("option").map((o) => o.textContent)).toContain("Went direct to a carrier");
+  });
+
   // Catches: the lost reason shown as its stored code, or a loss with no banner.
   it("shows Lost with the reason in words", async () => {
     client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "lost" }));
     client.getOpportunityOutcome.mockResolvedValue({ ...noOutcome, lostReason: "went_direct" });
     renderPage();
     expect(await screen.findByRole("region", { name: "Outcome" })).toHaveTextContent("Lost · Went direct to a PEO");
+  });
+
+  // Catches: a lost workers' comp search whose banner says the employer went direct to a PEO.
+  it("shows a lost workers' comp search's reason in a carrier's words", async () => {
+    client.getOpportunityPage.mockResolvedValue(quotedPage({}, { stage: "lost", line: "workers_comp", name: "March 2027 workers' comp search" }));
+    client.getOpportunityOutcome.mockResolvedValue({ ...noOutcome, lostReason: "went_direct" });
+    renderPage();
+    expect(await screen.findByRole("region", { name: "Outcome" })).toHaveTextContent("Lost · Went direct to a carrier");
   });
 
   // Catches: a closed opportunity drawn with no banner because the outcome could not be read: it says so and offers Try again, it does not pass for open.
@@ -2135,6 +2179,64 @@ describe("OpportunityPage: Choose PEOs (D-1727)", () => {
     await userEvent.click(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("button", { name: "Choose PEOs" }));
     const sending = await screen.findByRole("region", { name: "Send to several PEOs" });
     expect(await within(sending).findByRole("checkbox", { name: "Justworks" })).toBeChecked();
+  });
+});
+
+describe("OpportunityPage: a workers' comp search goes to carriers (ADR 0029)", () => {
+  const market = (id: number, name: string, line: string) => ({ id, name, line, profile: { version: 1, needed_to_quote: ["company_name"], sources: { answers: { kind: "document", name: "Guide", checked_on: "2026-11-02" } } } });
+  beforeEach(() => {
+    peoCatalogRows = [market(3, "Justworks", "peo"), market(9, "Granite Ridge Mutual", "workers_comp")];
+    advisor.loadSubmission.mockResolvedValue(certified({
+      fileId: "EAA-2026-0117", submission: { signer_name: "Elena Marsh", signer_title: "Owner", signed_at: "2026-10-28T10:00:00Z", file_id: "EAA-2026-0117", version: 2 },
+    }));
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Granite Ridge Mutual", state: "authorized", signedAt: null, wordingVersion: null }]);
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [quote(1, { peoName: "Granite Ridge Mutual" })] }, { line: "workers_comp", name: "March 2027 workers' comp search" }));
+  });
+
+  // Catches: a workers' comp search offered PEOs to send to (the database refuses each), or its carriers never offered because the choosing step read only PEOs.
+  it("offers the carriers to send to, and no PEO, under words that say carriers", async () => {
+    renderPage();
+    const panel = await screen.findByRole("region", { name: /^Quotes/ });
+    expect(within(panel).queryByRole("button", { name: "Choose PEOs" })).toBeNull();
+    await userEvent.click(await within(panel).findByRole("button", { name: "Choose carriers" }));
+    const sending = await screen.findByRole("region", { name: "Send to several carriers" });
+    expect(await within(sending).findByRole("checkbox", { name: "Granite Ridge Mutual" })).toBeChecked();
+    expect(within(sending).queryByRole("checkbox", { name: "Justworks" })).toBeNull();
+  });
+
+  // Catches: the way to a second carrier labelled "Send to another PEO" on a workers' comp search.
+  it("offers Send to another carrier once a quote request was sent", async () => {
+    renderPage();
+    const panel = await screen.findByRole("region", { name: /^Quotes/ });
+    expect(await within(panel).findByRole("link", { name: "Send to another carrier" })).toHaveAttribute("href", "/new-quote/o1");
+    expect(within(panel).queryByRole("link", { name: "Send to another PEO" })).toBeNull();
+  });
+
+  // Catches: a workers' comp search with nothing sent told its quotes appear once it is sent to a PEO.
+  it("says quotes appear once it is sent to a carrier, when none is sent", async () => {
+    client.getOpportunityPage.mockResolvedValue(page({ quotes: [] }, { stage: "ready_to_send", line: "workers_comp", name: "March 2027 workers' comp search" }));
+    renderPage();
+    expect(await within(await screen.findByRole("region", { name: /^Quotes/ })).findByText("No quotes yet. Quotes appear when the opportunity is sent to a carrier.")).toBeInTheDocument();
+  });
+
+  // Catches: a failed check of what each carrier still needs said of PEOs.
+  it("says it could not check what each carrier still needs, when the submission cannot be read", async () => {
+    advisor.loadSubmission.mockReset();
+    advisor.loadSubmission.mockRejectedValue(new Error("down"));
+    renderPage();
+    const alert = await within(await screen.findByRole("region", { name: /^Quotes/ })).findByRole("alert");
+    expect(alert).toHaveTextContent("We couldn't check what each carrier still needs.");
+    expect(alert).not.toHaveTextContent("PEO");
+  });
+
+  // Catches: the quotes panel of a workers' comp search headed "PEO" over its carriers, with an Admin fee column no carrier's quote ever fills.
+  it("lists its quote requests under Carrier, with no admin fee column", async () => {
+    renderPage();
+    const panel = await screen.findByRole("region", { name: /^Quotes/ });
+    const headers = within(panel).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toContain("Carrier");
+    expect(headers).not.toContain("PEO");
+    expect(headers).not.toContain("Admin fee");
   });
 });
 

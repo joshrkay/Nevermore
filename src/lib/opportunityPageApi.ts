@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { classifyApiError } from "@/lib/advisorApi";
+import { lineOf, type QuoteLine } from "@/data/lines";
 import { activityItemOf, activityItemSchema, type ActivityItem } from "@/lib/activityApi";
 import { OPPORTUNITY_STAGES, type OpportunityStage, type TabRows } from "@/lib/accountPageApi";
 import { isConflict, readSaveAnswer, type ChangedField, type RecordConflict, type Saved } from "@/lib/recordVersion";
@@ -35,6 +36,8 @@ export interface OpportunityFields {
   submissionId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** What is being quoted (ADR 0029): chosen when the opportunity was made, never changed. */
+  line: QuoteLine;
 }
 
 export interface OpportunityDetails extends OpportunityFields {
@@ -215,6 +218,8 @@ type FieldsRow = {
   created_at: string; updated_at: string;
   /** Missing in an older answer: read as none. */
   referral_partner?: { code: string; name: string } | null;
+  /** Missing in an answer from a database that has no lines yet: read as a PEO search. */
+  line?: string | null;
 };
 type EditableRow = Pick<FieldsRow, "name" | "target_start" | "employees" | "main_contact_id" | "expected_close" | "value" | "source" | "next_step" | "owner_id">;
 
@@ -223,6 +228,7 @@ const fieldsShape = z.object({
   employees: nullableNumber, main_contact_id: nullableText, expected_close: nullableText, value: nullableNumber, source: nullableText, next_step: nullableText,
   submission_id: nullableText, created_at: z.string().min(1), updated_at: z.string().min(1),
   referral_partner: z.object({ code: z.string(), name: z.string() }).nullish(),
+  line: z.string().nullish(),
 });
 const fieldsSchema = fieldsShape as unknown as z.ZodType<FieldsRow>;
 const editableSchema = z.object({
@@ -278,7 +284,7 @@ const activityShape = z.union([changeSchema, quoteEventSchema, intakeEventSchema
 const fieldsOf = (f: FieldsRow): OpportunityFields => ({
   id: f.id, version: f.version, accountId: f.account_id, ownerId: f.owner_id, name: f.name, targetStart: f.target_start, employees: f.employees,
   mainContactId: f.main_contact_id, expectedClose: f.expected_close, value: f.value, source: f.source, referralPartner: f.referral_partner ?? null, nextStep: f.next_step,
-  submissionId: f.submission_id, createdAt: f.created_at, updatedAt: f.updated_at,
+  submissionId: f.submission_id, createdAt: f.created_at, updatedAt: f.updated_at, line: lineOf(f.line),
 });
 
 const activityOf = (a: z.infer<typeof activityShape>): OpportunityActivityRow => {

@@ -397,4 +397,19 @@ describe("StatusPanel: the console's Lost offers the withdrawal (D-1725)", () =>
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByRole("checkbox", { name: "Send a withdrawal to TriNet and Insperity" })).toBeChecked();
   });
+
+  // Catches: the console opening the opportunity's dialog for a workers' comp search with a PEO search's words (the page it reads says the line: ADR 0029).
+  it("opens the dialog in a carrier's words for a submission on a workers' comp search", async () => {
+    const read = await opp.getOpportunityPage();
+    opp.getOpportunityPage.mockResolvedValue({ ...read, opportunity: { ...read.opportunity, name: "March 2027 workers' comp search", line: "workers_comp" } });
+    render(
+      <StatusPanel sessionId="s1" prospectUserId="p1" status="quoted" certified certifiedOnce history={[]}
+        quoteRequests={[quote(7, "TriNet", "quoted"), quote(9, "Insperity", "sent")]} mail={[sentTo(41, 7), sentTo(42, 9)]} companyName="Reyes Bakery" onChanged={vi.fn()} />,
+    );
+    await waitFor(() => expect(opp.getOpportunityOfSubmission).toHaveBeenCalledWith("s1"));
+    fireEvent.change(screen.getByLabelText("Change status to"), { target: { value: "lost" } });
+    fireEvent.click(screen.getByRole("button", { name: "Update status" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("group", { name: "Tell the carriers still open" })).toBeInTheDocument();
+  });
 });

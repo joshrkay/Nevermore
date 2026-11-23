@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { QuoteLinesField, type LineColumn } from "@/components/quotes/QuoteLinesField";
 import { DID_NOT_GO_THROUGH, failureWords, SaveFailed, useOfflineSave, useSaveFailure } from "@/components/workspace/form";
+import { QUOTE_EXPERIENCE_MOD_MAX, QUOTE_LINE_AREAS, QUOTE_PREMIUM_MAX, type QuoteArea, type QuoteLine } from "@/data/lines";
 import { QUOTE_ADMIN_FEE_BASES, QUOTE_KINDS, QUOTE_KIND_LABELS, QUOTE_NOTE_MAX, QUOTE_TIERS, type QuoteTier, type QuoteAdminFeeBasis, type QuoteKind } from "@/data/quoteRequests";
 import { attachQuoteDocument, recordQuote, uploadQuoteDocument, type QuoteFigure, type QuoteOffer, type QuoteRequestRow } from "@/lib/advisorApi";
 
@@ -30,9 +31,14 @@ const MEDICAL_COLUMNS: LineColumn[] = [
 /** A list of lines as the boxes hold them: every value as text. */
 const asLines = (lines: readonly object[] | null | undefined): Lines => (lines ?? []).map((l) => Object.fromEntries(Object.entries(l).map(([k, v]) => [k, String(v)])));
 
-/** The form that records what a PEO quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. */
-export function RecordQuoteForm({ request, mailFiles, initial, sources, onRecorded, onCancel }: {
+/**
+ * The form that records what a PEO or a carrier quoted (CRM-Q3.3, screen 12). Nothing is saved until the agent saves. It asks for what a quote of the
+ * opportunity's line holds and nothing else (ADR 0029, QUOTE_LINE_AREAS): the database refuses a quote that holds another line's areas.
+ */
+export function RecordQuoteForm({ request, line = "peo", mailFiles, initial, sources, onRecorded, onCancel }: {
   request: QuoteRequestRow;
+  /** What the opportunity is a search for: a PEO search unless said. */
+  line?: QuoteLine;
   /** The stored, scanned files on this quote request's own emails: the quote's document can be one without uploading it again (D-730). */
   mailFiles: readonly { id: number; file_name: string }[];
   /** What to start from, in recordQuote's own shape: a draft read from the quote document (N-2.3) fills the form, and nothing is recorded until the agent saves. */
@@ -65,6 +71,13 @@ export function RecordQuoteForm({ request, mailFiles, initial, sources, onRecord
   const [workersComp, setWorkersComp] = useState<Lines>(asLines(initial?.workersComp));
   const [unemployment, setUnemployment] = useState<Lines>(asLines(initial?.unemployment));
   const [medical, setMedical] = useState<Lines>(asLines(initial?.medical));
+  const [premium, setPremium] = useState(initial?.annualPremium != null ? String(initial.annualPremium) : "");
+  const [experienceMod, setExperienceMod] = useState(initial?.experienceMod != null ? String(initial.experienceMod) : "");
+  const [minimum, setMinimum] = useState(initial?.minimumPremium != null ? String(initial.minimumPremium) : "");
+  /** Whether a quote of this line holds the area: one it does not hold is not asked for and not sent. */
+  const holds = (area: QuoteArea) => QUOTE_LINE_AREAS[line].includes(area);
+  /** A figure as typed, or nothing for a blank: 0 is a figure the market gave (D-721). */
+  const figure = (typed: string) => (typed.trim() !== "" ? Number(typed) : null);
   const [note, setNote] = useState(initial?.note ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [mailFile, setMailFile] = useState("");
@@ -86,13 +99,16 @@ export function RecordQuoteForm({ request, mailFiles, initial, sources, onRecord
         receivedOn: receivedOn || null,
         expiresOn: expiresOn || null,
         startOn: startOn || null,
-        adminFee: fee.trim() !== "" ? Number(fee) : null,
-        adminFeeBasis: basis || null,
-        oneOffFees: oneOff.length > 0 ? oneOff.map((l) => ({ name: (l.name ?? "").trim(), amount: Number(l.amount) })) : null,
-        workersComp: workersComp.length > 0 ? workersComp.map((l) => ({ state: (l.state ?? "").trim().toUpperCase(), class_code: (l.class_code ?? "").trim(), rate: Number(l.rate) })) : null,
-        unemployment: unemployment.length > 0 ? unemployment.map((l) => (l.charge === "peo_rate" ? { state: (l.state ?? "").trim().toUpperCase(), charge: "peo_rate" as const, rate: Number(l.rate) } : { state: (l.state ?? "").trim().toUpperCase(), charge: "employer_rate" as const })) : null,
-        medical: medical.length > 0 ? medical.map((l) => ({ plan: (l.plan ?? "").trim(), tier: l.tier as QuoteTier, monthly: Number(l.monthly) })) : null,
+        adminFee: holds("admin_fee") ? figure(fee) : null,
+        adminFeeBasis: holds("admin_fee") ? basis || null : null,
+        oneOffFees: holds("one_off_fees") && oneOff.length > 0 ? oneOff.map((l) => ({ name: (l.name ?? "").trim(), amount: Number(l.amount) })) : null,
+        workersComp: holds("workers_comp") && workersComp.length > 0 ? workersComp.map((l) => ({ state: (l.state ?? "").trim().toUpperCase(), class_code: (l.class_code ?? "").trim(), rate: Number(l.rate) })) : null,
+        unemployment: holds("unemployment") && unemployment.length > 0 ? unemployment.map((l) => (l.charge === "peo_rate" ? { state: (l.state ?? "").trim().toUpperCase(), charge: "peo_rate" as const, rate: Number(l.rate) } : { state: (l.state ?? "").trim().toUpperCase(), charge: "employer_rate" as const })) : null,
+        medical: holds("medical") && medical.length > 0 ? medical.map((l) => ({ plan: (l.plan ?? "").trim(), tier: l.tier as QuoteTier, monthly: Number(l.monthly) })) : null,
         note: note.trim() || null,
+        ...(holds("annual_premium") || holds("experience_mod") || holds("minimum_premium")
+          ? { annualPremium: holds("annual_premium") ? figure(premium) : null, experienceMod: holds("experience_mod") ? figure(experienceMod) : null, minimumPremium: holds("minimum_premium") ? figure(minimum) : null }
+          : {}),
       });
       toast.success(`Recorded ${request.peo_name}'s quote.`);
       // The quote exists now, so its document can be named (D-738): the form saves first and uploads with the new quote's id.
@@ -133,18 +149,55 @@ export function RecordQuoteForm({ request, mailFiles, initial, sources, onRecord
       </select>
       {kindMark.note}
       {missing && kind === "" && <p role="alert" className="text-xs text-destructive">Say whether this is an estimate or a firm offer.</p>}
-      <label htmlFor={`${id}-fee`} className="block text-xs text-muted-foreground">Admin fee</label>
-      <input id={`${id}-fee`} type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} aria-describedby={feeMark.describedBy} className={inputClass} />
-      {feeMark.note}
-      <label htmlFor={`${id}-basis`} className="block text-xs text-muted-foreground">Admin fee basis</label>
-      <select id={`${id}-basis`} value={basis} onChange={(e) => setBasis(e.target.value as QuoteAdminFeeBasis | "")} className={inputClass}>
-        <option value="">Not quoted</option>
-        {QUOTE_ADMIN_FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASIS_LABELS[b]}</option>)}
-      </select>
-      <QuoteLinesField hint={suggestion("oneOffFees")} title="One-off fees" noun="one-off fee" columns={ONE_OFF_COLUMNS} lines={oneOff} onChange={setOneOff} />
-      <QuoteLinesField hint={suggestion("workersComp")} title="Workers' comp rates" noun="workers' comp rate" columns={WORKERS_COMP_COLUMNS} lines={workersComp} onChange={setWorkersComp} />
-      <QuoteLinesField hint={suggestion("unemployment")} title="Unemployment tax" noun="unemployment line" article="an" columns={UNEMPLOYMENT_COLUMNS} lines={unemployment} onChange={setUnemployment} />
-      <QuoteLinesField hint={suggestion("medical")} title="Medical rates" noun="medical rate" columns={MEDICAL_COLUMNS} lines={medical} onChange={setMedical} />
+      {/* One block for each cost area a quote of this line holds, in the order its comparison shows them (QUOTE_LINE_AREAS). */}
+      {QUOTE_LINE_AREAS[line].map((area) => {
+        switch (area) {
+          case "admin_fee":
+            return (
+              <Fragment key={area}>
+                <label htmlFor={`${id}-fee`} className="block text-xs text-muted-foreground">Admin fee</label>
+                <input id={`${id}-fee`} type="number" min={0} step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} aria-describedby={feeMark.describedBy} className={inputClass} />
+                {feeMark.note}
+                <label htmlFor={`${id}-basis`} className="block text-xs text-muted-foreground">Admin fee basis</label>
+                <select id={`${id}-basis`} value={basis} onChange={(e) => setBasis(e.target.value as QuoteAdminFeeBasis | "")} className={inputClass}>
+                  <option value="">Not quoted</option>
+                  {QUOTE_ADMIN_FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASIS_LABELS[b]}</option>)}
+                </select>
+              </Fragment>
+            );
+          case "one_off_fees":
+            return <QuoteLinesField key={area} hint={suggestion("oneOffFees")} title="One-off fees" noun="one-off fee" columns={ONE_OFF_COLUMNS} lines={oneOff} onChange={setOneOff} />;
+          case "workers_comp":
+            return <QuoteLinesField key={area} hint={suggestion("workersComp")} title="Workers' comp rates" noun="workers' comp rate" columns={WORKERS_COMP_COLUMNS} lines={workersComp} onChange={setWorkersComp} />;
+          case "unemployment":
+            return <QuoteLinesField key={area} hint={suggestion("unemployment")} title="Unemployment tax" noun="unemployment line" article="an" columns={UNEMPLOYMENT_COLUMNS} lines={unemployment} onChange={setUnemployment} />;
+          case "medical":
+            return <QuoteLinesField key={area} hint={suggestion("medical")} title="Medical rates" noun="medical rate" columns={MEDICAL_COLUMNS} lines={medical} onChange={setMedical} />;
+          case "annual_premium":
+            return (
+              <Fragment key={area}>
+                <label htmlFor={`${id}-premium`} className="block text-xs text-muted-foreground">Annual premium</label>
+                <input id={`${id}-premium`} type="number" min={0} max={QUOTE_PREMIUM_MAX} step="0.01" value={premium} onChange={(e) => setPremium(e.target.value)} aria-describedby={`${id}-premium-hint`} className={inputClass} />
+                <p id={`${id}-premium-hint`} className="text-xs text-muted-foreground">The estimated premium for the year, in dollars. Leave it blank when the quote gives none.</p>
+              </Fragment>
+            );
+          case "experience_mod":
+            return (
+              <Fragment key={area}>
+                <label htmlFor={`${id}-mod`} className="block text-xs text-muted-foreground">Experience modification</label>
+                <input id={`${id}-mod`} type="number" min={0} max={QUOTE_EXPERIENCE_MOD_MAX} step="0.01" value={experienceMod} onChange={(e) => setExperienceMod(e.target.value)} aria-describedby={`${id}-mod-hint`} className={inputClass} />
+                <p id={`${id}-mod-hint`} className="text-xs text-muted-foreground">The factor the carrier applied, such as 0.92.</p>
+              </Fragment>
+            );
+          case "minimum_premium":
+            return (
+              <Fragment key={area}>
+                <label htmlFor={`${id}-minimum`} className="block text-xs text-muted-foreground">Minimum premium</label>
+                <input id={`${id}-minimum`} type="number" min={0} max={QUOTE_PREMIUM_MAX} step="0.01" value={minimum} onChange={(e) => setMinimum(e.target.value)} className={inputClass} />
+              </Fragment>
+            );
+        }
+      })}
       <label htmlFor={`${id}-received`} className="block text-xs text-muted-foreground">Received on</label>
       <input id={`${id}-received`} type="date" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} aria-describedby={receivedMark.describedBy} className={inputClass} />
       {receivedMark.note}

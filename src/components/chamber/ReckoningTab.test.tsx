@@ -13,9 +13,10 @@ const auth = {
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-// The employer's PEO boxes are tested on their own (src/components/PacketRecipients.test.tsx); here, only where they appear.
+// The employer's PEO boxes are tested on their own (src/components/PacketRecipients.test.tsx); here, only where they appear. The tab gives them no heading: the
+// boxes word their own question by the intake's line (PEOs, or carriers on a workers' comp intake: ADR 0029), so the stand-in is named for what it is.
 vi.mock("@/components/PacketRecipients", () => ({
-  default: ({ sessionId, heading }: { sessionId: string; heading: string }) => <section aria-label={heading} data-session={sessionId} />,
+  default: ({ sessionId, heading }: { sessionId: string; heading?: string }) => <section aria-label="Who may receive the packet" data-session={sessionId} data-heading={heading ?? ""} />,
 }));
 
 const { default: ReckoningTab } = await import("./ReckoningTab");
@@ -189,7 +190,9 @@ describe("ReckoningTab certification", () => {
     fillSigner();
     sign();
     fireEvent.click(submitButton());
-    expect(await screen.findByRole("region", { name: "Which PEOs may receive your packet?" })).toHaveAttribute("data-session", "s1");
+    expect(await screen.findByRole("region", { name: "Who may receive the packet" })).toHaveAttribute("data-session", "s1");
+    // The tab words nothing itself: a heading of its own would say PEOs on a workers' comp intake.
+    expect(screen.getByRole("region", { name: "Who may receive the packet" })).toHaveAttribute("data-heading", "");
   });
 
   it("shows an error, not a confirmation, when the submission can't be saved", async () => {
@@ -463,13 +466,13 @@ describe("ReckoningTab on an intake that is already certified", () => {
   // the question is asked of another intake.
   it("asks which PEOs may receive the packet once it is certified", () => {
     mountWith({ status: "certified", submission });
-    expect(screen.getByRole("region", { name: "Which PEOs may receive your packet?" })).toHaveAttribute("data-session", "s1");
+    expect(screen.getByRole("region", { name: "Who may receive the packet" })).toHaveAttribute("data-session", "s1");
   });
 
   // Break caught: the question is asked before there is a certified packet to send.
   it("does not ask before the intake is certified", () => {
     mountWith({ status: "stale", submission });
-    expect(screen.queryByRole("region", { name: "Which PEOs may receive your packet?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Who may receive the packet" })).not.toBeInTheDocument();
   });
 
   it("offers certification again once the answers have changed", () => {

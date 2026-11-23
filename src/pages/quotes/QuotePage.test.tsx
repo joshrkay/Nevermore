@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceContext, type Workspace } from "@/components/workspace/workspaceContext";
+import { CARRIER_SEND_NOTICE } from "@/data/legalWording";
 import { EMPTY_CHAMBER_DATA } from "@/data/chamberTypes";
 import { allStatuses, expectStatusesOutsideBusy, spoken } from "@/test/loading";
 
@@ -764,6 +765,128 @@ describe("QuotePage: the quote's figures", () => {
     renderPage();
     const panel = await screen.findByRole("region", { name: "Quote" });
     for (const term of ["Admin fee", "Received", "Expires", "Proposed start"]) expect(within(panel).getByText(term).nextElementSibling).toHaveTextContent("Not yet");
+  });
+});
+
+describe("QuotePage: a carrier's quote on a workers' comp search (ADR 0029)", () => {
+  /** The page of a quote request to a carrier, on an opportunity whose line is workers' comp. */
+  const carrierPage = (r: Record<string, unknown> = {}, detail?: Record<string, unknown>) => {
+    const p = quotePage({ request: { peo_name: "Granite Ridge Mutual", ...r }, detail });
+    return { ...p, opportunity: { ...p.opportunity, opportunity: { ...p.opportunity.opportunity, name: "March 2027 workers' comp search", line: "workers_comp" } } };
+  };
+
+  // Catches: a carrier's quote shown with a PEO's line ("Admin fee: Not yet") and its premium shown nowhere on its own page.
+  it("shows what the carrier quoted: the premium, the experience modification and the minimum premium, and no admin fee", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage({ status: "quoted", quote_received_on: "2026-11-03", quote_expires_on: "2026-12-05", proposed_start_on: "2027-03-01" }));
+    advisor.loadQuotes.mockResolvedValue([{ id: 31, quote_request_id: 7, kind: "firm_offer", annual_premium: 18450, experience_mod: 0.92, minimum_premium: 0, document: null }]);
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote" });
+    const line = (term: string) => within(panel).getByText(term).nextElementSibling as HTMLElement;
+    await waitFor(() => expect(line("Annual premium")).toHaveTextContent("$18,450"));
+    expect(line("Experience modification")).toHaveTextContent("0.92");
+    // A minimum premium of 0 is what the carrier quoted, not a blank (D-721).
+    expect(line("Minimum premium")).toHaveTextContent("$0");
+    expect(line("Expires")).toHaveTextContent("Dec 5, 2026");
+    expect(within(panel).queryByText("Admin fee")).toBeNull();
+  });
+
+  // Catches: a quoted request whose premium reads "Not yet" because the quotes could not be read: a figure the page made up from a failed read. The quote
+  // request's own dates are still shown, and the page stays up.
+  it("says a carrier's figures couldn't be loaded when the quotes can't be read, never that there are none yet", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage({ status: "quoted", quote_expires_on: "2026-12-05" }));
+    advisor.loadQuotes.mockRejectedValue(new Error("Couldn't load the quotes."));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote" });
+    const line = (term: string) => within(panel).getByText(term).nextElementSibling as HTMLElement;
+    await waitFor(() => expect(line("Annual premium")).toHaveTextContent("Couldn't load"));
+    expect(line("Experience modification")).toHaveTextContent("Couldn't load");
+    expect(line("Minimum premium")).toHaveTextContent("Couldn't load");
+    expect(line("Expires")).toHaveTextContent("Dec 5, 2026");
+  });
+
+  // Catches: "Annual premium: Not yet" shown on a quoted request for as long as its quotes are still being read.
+  it("leaves a carrier's figures blank while the quotes are being read, and still shows the request's own dates", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage({ status: "quoted", quote_expires_on: "2026-12-05" }));
+    advisor.loadQuotes.mockReturnValue(new Promise(() => {}));
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote" });
+    const line = (term: string) => within(panel).getByText(term).nextElementSibling as HTMLElement;
+    for (const term of ["Annual premium", "Experience modification", "Minimum premium"]) expect(line(term)).toHaveTextContent(/^$/);
+    expect(line("Expires")).toHaveTextContent("Dec 5, 2026");
+    // What the request itself holds and has none of is still "Not yet".
+    expect(line("Received")).toHaveTextContent("Not yet");
+  });
+
+  // Catches: a premium the page has read replaced by "Couldn't load" when a later, quiet read of the quotes fails (the page keeps what it last read, as the rest of it does).
+  it("keeps the carrier's figures it last read when a later read of the quotes fails", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage({ status: "quoted" }));
+    advisor.loadQuotes.mockResolvedValueOnce([{ ...storedQuote(), admin_fee: null, annual_premium: 18450, experience_mod: 0.92, minimum_premium: 1500 }]).mockRejectedValue(new Error("Couldn't load the quotes."));
+    advisor.uploadQuoteDocument.mockResolvedValue({ attachmentId: 51, fileName: "quote.pdf", status: "stored" });
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Quote" });
+    const line = (term: string) => within(panel).getByText(term).nextElementSibling as HTMLElement;
+    await waitFor(() => expect(line("Annual premium")).toHaveTextContent("$18,450"));
+    // Storing the quote's document makes the page read the quotes again; that read fails.
+    await userEvent.upload(within(await screen.findByRole("region", { name: "Quote document" })).getByLabelText("Upload the quote document"), new File(["%PDF-1.4"], "quote.pdf", { type: "application/pdf" }));
+    await waitFor(() => expect(advisor.loadQuotes.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(advisor.loadQuotes.mock.results.at(-1)?.type).toBe("return"));
+    await expect(advisor.loadQuotes.mock.results.at(-1)!.value).rejects.toThrow();
+    expect(line("Annual premium")).toHaveTextContent("$18,450");
+    expect(line("Experience modification")).toHaveTextContent("0.92");
+  });
+
+  // Catches: an update sent to a carrier listed as an update "to a PEO" on the carrier's own page.
+  it("lists an update sent to the carrier as one to a carrier", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage({}, threadOf({ quoteRequestMessages: [
+      message({ id: 2, direction: "sent", status: "sent", to_addresses: ["uw@granite.example"], subject: "Harborview: update", bundle_link_id: 10, update_from_version: 2, sent_at: "2026-11-09T09:00:00Z", recorded_at: "2026-11-09T09:00:00+00:00" }),
+    ] })));
+    renderPage();
+    const sent = await screen.findByRole("region", { name: "What was sent" });
+    expect(within(sent).getByText("Update to a carrier holding version 2")).toBeInTheDocument();
+  });
+
+  // Catches: a closed quote request to a carrier with no Send again (its profile looked for among the PEOs), or a send whose composer tells the agent "the PEO
+  // gets a link" and previews the PEO's notice over a message that goes to a carrier.
+  it("offers Send again on a closed carrier's quote, in a composer that says carrier", async () => {
+    const user = userEvent.setup();
+    peoCatalogRows = [profileRow(1, "TriNet"), { ...profileRow(9, "Granite Ridge Mutual"), line: "workers_comp" }];
+    advisor.loadSubmission.mockResolvedValue(certified({ submission: { signer_name: "Elena Marsh" }, fileId: "EAA-2026-0117", line: "workers_comp" }));
+    peoSend.loadPeoSendContext.mockResolvedValue({ mailbox: { connected: true, address: "dana@example.com" }, contacts: [{ name: "Uma Ward", role: null, email: "uw@granite.example" }], reply_address: null });
+    peoRegistrations.loadRegisteredElsewhere.mockResolvedValue([]);
+    quotes.getQuotePage.mockResolvedValue(carrierPage({ status: "closed" }, { currentVersion: 3 }));
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Send again" }));
+    const form = screen.getByRole("form", { name: "Send again" });
+    expect(await within(form).findByLabelText(/Uma Ward/)).toBeInTheDocument();
+    expect(peoSend.loadPeoSendContext).toHaveBeenCalledWith("s1", "Granite Ridge Mutual");
+    expect(within(form).getByText("Added under your note; you can't change it. The carrier gets a link, never the files.")).toBeInTheDocument();
+    expect(within(form).getByText(CARRIER_SEND_NOTICE)).toBeInTheDocument();
+    expect(within(form).queryByText(/PEO/)).toBeNull();
+  });
+
+  // Catches: the people at a carrier called a PEO's on the carrier's own page.
+  it("calls who it was sent to the carrier's contact", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage());
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "Details" });
+    expect(within(panel).getByText("Carrier contact")).toBeInTheDocument();
+    expect(within(panel).queryByText("PEO contact")).toBeNull();
+  });
+
+  // Catches: Record the quote opening a PEO's form on a carrier's quote, whose save the database refuses; or "Read the document" offered where the reader
+  // only knows a PEO's figures.
+  it("records the quote on the workers' comp form, and offers no reading of the document", async () => {
+    quotes.getQuotePage.mockResolvedValue(carrierPage());
+    advisor.loadQuotes.mockResolvedValue([{ id: 31, quote_request_id: 7, kind: "estimate", annual_premium: 100, document: { id: 51, file_name: "quote.pdf", size_bytes: 10, storage_path: "p" } }]);
+    renderPage();
+    const record = await screen.findByRole("button", { name: "Record the quote" });
+    // The quote's document is here (a PEO's quote would be offered its reading beside Record the quote), and no reading is offered.
+    expect(await screen.findByRole("region", { name: "Quote document" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Read the document" })).toBeNull();
+    await userEvent.click(record);
+    const form = screen.getByRole("form", { name: "Record the quote from Granite Ridge Mutual" });
+    expect(within(form).getByLabelText("Annual premium")).toBeInTheDocument();
+    expect(within(form).queryByLabelText("Admin fee")).toBeNull();
   });
 });
 

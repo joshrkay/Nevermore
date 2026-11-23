@@ -3,7 +3,7 @@ import { OPPORTUNITY_SOURCES, dollarsOf, newOpportunitySchema, suggestedOpportun
 
 const ok = {
   name: "January 2028 PEO search", target_start: "2028-01-01", employees: "45", main_contact: "", expected_close: "2027-12-10", value: "$7,100", source: "Referral",
-  referral_partner: "", owner: "u1", next_step: "",
+  referral_partner: "", owner: "u1", next_step: "", line: "peo",
 };
 const issues = (v: unknown) => {
   const r = newOpportunitySchema.safeParse(v);
@@ -22,6 +22,15 @@ describe("suggestedOpportunityName (D-188, D-438)", () => {
     expect(suggestedOpportunityName("")).toBe("PEO search");
     expect(suggestedOpportunityName("2028-13-40")).toBe("PEO search");
     expect(suggestedOpportunityName("soon")).toBe("PEO search");
+  });
+});
+
+describe("suggestedOpportunityName for a line (ADR 0029)", () => {
+  // Catches: a workers' comp search offered the name of a PEO search, so the opportunity's own name says the wrong thing on every list it is in.
+  it("names a workers' comp search as one, with its start month and year or with none", () => {
+    expect(suggestedOpportunityName("2027-03-15", "workers_comp")).toBe("March 2027 workers' comp search");
+    expect(suggestedOpportunityName("", "workers_comp")).toBe("Workers' comp search");
+    expect(suggestedOpportunityName("2027-03-15", "peo")).toBe("March 2027 PEO search");
   });
 });
 
@@ -76,5 +85,12 @@ describe("newOpportunitySchema (D-438)", () => {
   it("takes a source from the list, or none", () => {
     expect(issues({ ...ok, source: "Cold call" })).toEqual(["source: Choose a source from the list."]);
     expect(issues({ ...ok, source: "" })).toEqual([]);
+  });
+  // Catches: a line that is not one of the lines (or none at all) reaching the database, which refuses it as a failed save (ADR 0029).
+  it("takes what is being quoted from the lines, and never none", () => {
+    expect(issues({ ...ok, line: "general_liability" })).toEqual(["line: Choose what is being quoted."]);
+    expect(issues({ ...ok, line: "" })).toEqual(["line: Choose what is being quoted."]);
+    expect(issues({ ...ok, line: "workers_comp" })).toEqual([]);
+    expect(newOpportunitySchema.parse({ ...ok, line: "workers_comp" }).line).toBe("workers_comp");
   });
 });

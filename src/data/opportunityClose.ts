@@ -1,5 +1,6 @@
 import { isOpenQuoteRequest } from "@/data/quoteRequests";
 import { formatDay, formatWhen } from "@/data/accountPage";
+import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
 import { replySubject } from "@/data/peoFollowUp";
 import type { ChangedField } from "@/lib/recordVersion";
 
@@ -22,7 +23,11 @@ export const LOST_REASONS = [
   { value: "other", label: "Other" },
 ] as const;
 
-export const lostReasonWords = (reason: string): string => LOST_REASONS.find((r) => r.value === reason)?.label ?? reason;
+/** The same reasons as a search of a line reads them (ADR 0029): going direct is to a PEO, or to a carrier on a workers' comp search. */
+export const lostReasons = (line: QuoteLine = "peo"): readonly { value: (typeof LOST_REASONS)[number]["value"]; label: string }[] =>
+  LOST_REASONS.map((r) => (r.value === "went_direct" ? { value: r.value, label: `Went direct to ${MARKET_WORDS[line].a}` } : r));
+
+export const lostReasonWords = (reason: string, line: QuoteLine = "peo"): string => lostReasons(line).find((r) => r.value === reason)?.label ?? reason;
 
 /** n x 10^places as a whole number (the inputs have at most two decimals, the database's `numeric(14, 2)`; four are kept so an older longer figure is not cut). */
 const scaled = (n: number, places: number): bigint => BigInt(Math.round(n * 10 ** places));
@@ -68,12 +73,14 @@ export function renewalAfter(start: string): string {
 /** The won or lost banner's line (D-472): "Won · <PEO> · from <start> · renews <date>", or "Lost · <reason>". */
 export function outcomeBannerWords(o: {
   stage: "won" | "lost"; peoName: string | null; startDate: string | null; renewsOn: string | null; lostReason: string | null; lostNote: string | null;
+  /** What the opportunity was a search for (ADR 0029): a PEO search unless said. The reason is worded by it. */
+  line?: QuoteLine;
 }): string {
   if (o.stage === "won") {
     return ["Won", o.peoName, o.startDate && `from ${formatDay(o.startDate)}`, o.renewsOn && `renews ${formatDay(o.renewsOn)}`].filter(Boolean).join(" · ");
   }
   if (!o.lostReason) return "Lost";
-  const reason = lostReasonWords(o.lostReason);
+  const reason = lostReasonWords(o.lostReason, o.line);
   return `Lost · ${reason}${o.lostReason === "other" && o.lostNote ? `: ${o.lostNote}` : ""}`;
 }
 

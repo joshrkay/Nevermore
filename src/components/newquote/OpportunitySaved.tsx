@@ -1,3 +1,4 @@
+import { lineOf } from "@/data/lines";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ export function OpportunitySaved({ firmId, opportunityId, onClose, onWide }: { f
   const page = found.data;
   // Step 4 (CRM-Q2.5, D-1763): a certified intake opens at the existing choose-and-send, read the way the opportunity's page reads it.
   const atChoosing = !!page && stepToOpenAt(progressOf(page)) === 4 && page.opportunity.stage !== "won" && page.opportunity.stage !== "lost";
-  const needs = useStillNeeds(firmId, page?.opportunity.submissionId ?? null, atChoosing);
+  const needs = useStillNeeds(firmId, page?.opportunity.submissionId ?? null, atChoosing, lineOf(page?.opportunity.line));
   // The intake gets the room for Lenore and the tabs side by side (the dialog widens while it is open).
   const inChamber = !!page?.intake && !page.intake.certifiedAt;
   useEffect(() => {
@@ -52,7 +53,7 @@ export function OpportunitySaved({ firmId, opportunityId, onClose, onWide }: { f
       </dl>
       {page.intake && !page.intake.certifiedAt && <IntakeInvite intakeId={page.intake.submissionId} contact={page.contacts.find((c) => c.main) ?? null} />}
       {page.intake && !page.intake.certifiedAt && <div className="h-[70vh] overflow-hidden rounded-md border border-border"><ChamberPage intakeId={page.intake.submissionId} embedded /></div>}
-      {atChoosing && <ChoosePeos startChosen alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => undefined} returnTo={`/new-quote/${opportunityId}`} onSent={() => void found.refetch()} />}
+      {atChoosing && <ChoosePeos line={lineOf(page.opportunity.line)} startChosen alreadySent={sentToPeos(page.quotes)} needs={needs} onChoose={() => undefined} returnTo={`/new-quote/${opportunityId}`} onSent={() => void found.refetch()} />}
       {stepToOpenAt(progressOf(page)) === 2 && <Button type="button" onClick={() => void startBrokerIntake(opportunityId).then(() => found.refetch())}>Start the intake</Button>}
       <div className="flex gap-2">
         {certifiedViewShows(progressOf(page)) && <Button type="button" variant="outline" onClick={() => setBackToFlow(false)}>Certified answers</Button>}

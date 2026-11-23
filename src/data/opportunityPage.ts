@@ -4,6 +4,7 @@ import type { Json } from "@/integrations/supabase/types";
 import type { OpportunityStage } from "@/lib/accountPageApi";
 import type { OpportunityChangeRow, OpportunityEdit, OpportunityEditable, OpportunityFields, OpportunityIntakeEvent, OpportunityQuoteEvent } from "@/lib/opportunityPageApi";
 import { formatDay, STAGE_LABELS, valueWords } from "./accountPage";
+import { MARKET_WORDS, type QuoteLine } from "./lines";
 import { DECLINE_REASON_LABELS, isOpenQuoteRequest, type DeclineReason } from "./quoteRequests";
 
 // The words the opportunity's page says (story CRM-O1.1b, screen 19): the stage bar, what would move the stage on, how a quote request's row reads, and the form's
@@ -38,16 +39,18 @@ const firstName = (full: string | null | undefined): string | null => {
  * What would move the stage on, under the bar (D-414): guidance, never a button a later epic owns (D-402). The name is the prospect's first name, else the main
  * contact's, else "the employer". Null when there is nothing to wait for (Won and Lost: the banner says it, CRM-O1.3b).
  */
-export function nextStepWords(stage: OpportunityStage, pipelineStatus: string | null, prospectName: string | null, mainContactName: string | null): string | null {
+export function nextStepWords(stage: OpportunityStage, pipelineStatus: string | null, prospectName: string | null, mainContactName: string | null, line: QuoteLine = "peo"): string | null {
   const name = firstName(prospectName) ?? firstName(mainContactName) ?? "the employer";
+  // Who a search is sent to, in its line's word (ADR 0029): a PEO, or a carrier.
+  const market = MARKET_WORDS[line].a;
   switch (stage) {
     case "qualifying": return "Start the quote to move to Intake under way";
     case "intake_under_way":
       if (pipelineStatus === "submitted" || pipelineStatus === "under_review") return "Waiting for the review to finish";
       if (pipelineStatus === "information_requested") return `Waiting for ${name} to answer`;
       return `Waiting for ${name} to certify`;
-    case "ready_to_send": return "Send to a PEO to move to In market";
-    case "in_market": return "Waiting for a PEO to quote";
+    case "ready_to_send": return `Send to ${market} to move to In market`;
+    case "in_market": return `Waiting for ${market} to quote`;
     case "quoted": return "Mark won or lost when the employer decides";
     default: return null;
   }

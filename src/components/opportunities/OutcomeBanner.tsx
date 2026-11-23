@@ -5,6 +5,7 @@ import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescript
 import { Button } from "@/components/ui/button";
 import { submissionPath } from "@/components/accounts/accountColumns";
 import { formatDay, STAGE_LABELS } from "@/data/accountPage";
+import { lineOf } from "@/data/lines";
 import { changedLine, outcomeBannerWords } from "@/data/opportunityClose";
 import { dollarsWords, opportunityFieldLabel } from "@/data/opportunityPage";
 import { isConflict } from "@/lib/recordVersion";
@@ -54,7 +55,7 @@ export function OutcomeBanner({ firmId, page, outcome, loading, failed, onRetry,
             <p className="font-medium break-words">
               {outcomeBannerWords({
                 stage, peoName: placement?.peoName ?? null, startDate: placement?.startDate ?? null, renewsOn: placement?.renewsOn ?? null,
-                lostReason: outcome.lostReason, lostNote: outcome.lostNote,
+                lostReason: outcome.lostReason, lostNote: outcome.lostNote, line: lineOf(page.opportunity.line),
               })}
             </p>
           ) : failed ? (

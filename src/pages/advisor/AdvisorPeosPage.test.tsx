@@ -217,8 +217,29 @@ describe("AdvisorPeosPage", () => {
       api.loadPeoDirectory.mockResolvedValue([...directory(), { id: 9, name: "Acme PEO", listed: true, versions: [] }]);
       fireEvent.change(screen.getByLabelText("Its name"), { target: { value: " Acme PEO " } });
       fireEvent.click(screen.getByRole("button", { name: "Add a PEO" }));
-      await waitFor(() => expect(api.addPeo).toHaveBeenCalledWith("Acme PEO"));
+      await waitFor(() => expect(api.addPeo).toHaveBeenCalledWith("Acme PEO", "peo"));
       expect(await screen.findByRole("region", { name: "Acme PEO" })).toHaveTextContent("No profile yet");
+    });
+
+    // ADR 0029. Break caught: no way to list a workers' comp carrier, or a carrier added as a PEO, which every PEO search would then offer and no workers' comp
+    // search could be sent to; and a carrier in the list reading as a PEO.
+    it("adds a workers' comp carrier when the admin says that is what it quotes, and lists it as one", async () => {
+      api.addPeo.mockResolvedValue({ id: 9 });
+      renderPage();
+      await screen.findByRole("list", { name: "PEOs" });
+      const what = screen.getByLabelText("What it quotes");
+      expect(what).toHaveValue("peo");
+      // The choice says that the other line's market is a carrier: the button and the list still say PEO.
+      expect(within(what).getAllByRole("option").map((o) => o.textContent)).toEqual(["PEO", "Workers' comp (a carrier)"]);
+      fireEvent.change(what, { target: { value: "workers_comp" } });
+      api.loadPeoDirectory.mockResolvedValue([...directory(), { id: 9, name: "Granite Ridge Mutual", line: "workers_comp", listed: true, versions: [] }]);
+      fireEvent.change(screen.getByLabelText("Its name"), { target: { value: "Granite Ridge Mutual" } });
+      fireEvent.click(screen.getByRole("button", { name: "Add a PEO" }));
+      await waitFor(() => expect(api.addPeo).toHaveBeenCalledWith("Granite Ridge Mutual", "workers_comp"));
+      const row = (await screen.findByRole("link", { name: /Granite Ridge Mutual/ }));
+      expect(row).toHaveTextContent("Workers' comp carrier");
+      // A PEO in the same list says nothing of the kind: it reads as it always has.
+      expect(screen.getByRole("link", { name: /^TriNet/ })).not.toHaveTextContent("carrier");
     });
 
     it("keeps the name typed and shows the database's reason when it refuses a PEO", async () => {

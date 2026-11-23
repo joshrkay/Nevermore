@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
+import { LINE_LABELS, lineOf, QUOTE_LINES } from "@/data/lines";
 import { dollarsOf, newOpportunitySchema, OPPORTUNITY_SOURCES, suggestedOpportunityName, suggestedRenewalName } from "@/data/opportunityFields";
 import { useAuth } from "@/hooks/useAuth";
 import { createOpportunity, getNewOpportunityContext, OpportunityError, type MadeOpportunity, type NewOpportunityContext } from "@/lib/opportunityCreateApi";
@@ -109,6 +110,7 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
     defaultValues: {
       name: renewal ? suggestedRenewalName(renewal.renewsOn) : suggestedOpportunityName(""), target_start: renewal ? renewal.renewsOn : "", employees: context.account.employees === null ? "" : String(context.account.employees),
       main_contact: context.mainContact?.id ?? "", expected_close: "", value: "", source: renewal ? "Renewal" : "", referral_partner: "", owner: me, next_step: "",
+      line: "peo",
     },
     save: async (values) => {
       const v = values as Record<string, string>;
@@ -126,6 +128,7 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
           nextStep: v.next_step,
           ownerId: v.owner || null,
           renewalId: renewal?.id ?? null,
+          line: lineOf(v.line),
         });
       } catch (e) {
         if (e instanceof OpportunityError && e.kind === "renewalTaken") onRenewalTaken?.();
@@ -156,6 +159,21 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
           <Label htmlFor="new-opportunity-account">Account</Label>
           <Input id="new-opportunity-account" value={context.account.name} disabled readOnly />
         </div>
+        <Field name="line" label="What is being quoted">
+          {(field) => (
+            // What the search is for (ADR 0029): chosen here and never changed, since what is sent and what is quoted follow it.
+            <SelectInput
+              {...field}
+              onChange={(e) => {
+                field.onChange(e);
+                // The offered name says what the search is for, until the person types a name of their own (D-438). A renewal's name is its own.
+                if (!nameTyped.current && !renewal) api.form.setValue("name", suggestedOpportunityName(api.form.getValues("target_start"), lineOf(e.target.value)));
+              }}
+            >
+              {QUOTE_LINES.map((l) => <option key={l} value={l}>{LINE_LABELS[l]}</option>)}
+            </SelectInput>
+          )}
+        </Field>
         <Field name="target_start" label="Target start date">
           {(field) => (
             <Input
@@ -163,7 +181,7 @@ function NewOpportunityForm({ firmId, accountId, person, renewal, context, onClo
               type="date"
               onChange={(e) => {
                 field.onChange(e);
-                if (!nameTyped.current) api.form.setValue("name", renewal ? suggestedRenewalName(e.target.value) : suggestedOpportunityName(e.target.value));
+                if (!nameTyped.current) api.form.setValue("name", renewal ? suggestedRenewalName(e.target.value) : suggestedOpportunityName(e.target.value, lineOf(api.form.getValues("line"))));
               }}
             />
           )}

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { dateRule, nameRule, wholeNumberRule } from "@/components/workspace/form/fieldRules";
+import { MARKET_WORDS, QUOTE_LINES, type QuoteLine } from "@/data/lines";
 
 // The rules of a new opportunity's own fields as the New opportunity form applies them (story CRM-A2.3, screen 25; D-438, D-439). The database asks the same rules
 // (opportunity_input_error and opportunity_source_is_known, 20261120120000 and 20261120130000), so a form that takes a value is a form the database takes. The
@@ -18,13 +19,16 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
  * The name offered for a search from its target start (D-188, D-438): "January 2028 PEO search", or "PEO search" when no start is known. `targetStart` is a day as
  * a date field gives it ("2028-01-01"); anything that is not a day that exists is no start.
  */
-export const suggestedOpportunityName = (targetStart: string): string => {
+export const suggestedOpportunityName = (targetStart: string, line: QuoteLine = "peo"): string => {
+  // What the search is for, in the line's own words (ADR 0029): "PEO search", "workers' comp search".
+  const search = MARKET_WORDS[line].search;
+  const alone = search.charAt(0).toUpperCase() + search.slice(1);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(targetStart.trim());
-  if (!m) return "PEO search";
+  if (!m) return alone;
   const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
   const d = new Date(Date.UTC(year, month - 1, day));
-  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return "PEO search";
-  return `${MONTHS[month - 1]} ${year} PEO search`;
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return alone;
+  return `${MONTHS[month - 1]} ${year} ${search}`;
 };
 
 /**
@@ -65,4 +69,6 @@ export const newOpportunitySchema = z.object({
   referral_partner: z.string(),
   owner: z.string(),
   next_step: z.string().trim().max(OPPORTUNITY_NEXT_STEP_MAX, "Use 2,000 characters or fewer."),
+  // What is being quoted (ADR 0029): one of the lines. The form offers them and starts on a PEO search.
+  line: z.string().refine((v) => (QUOTE_LINES as readonly string[]).includes(v), "Choose what is being quoted."),
 });

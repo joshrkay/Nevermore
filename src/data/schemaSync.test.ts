@@ -22,7 +22,8 @@ import { FIELD_KINDS, FIELD_LABELS } from "@/data/provenance";
 import { DRAFT_RETENTION_DAYS } from "@/data/intakeLifecycle";
 import { RETENTION } from "@/data/dataPolicy";
 import { INTAKE_CONSENT_VERSION } from "@/data/intakeConsent";
-import { PEO_AUTHORIZATION_VERSION, PEO_SEND_NOTICE } from "@/data/legalWording";
+import { CARRIER_SEND_NOTICE, PEO_AUTHORIZATION_VERSION, PEO_SEND_NOTICE } from "@/data/legalWording";
+import { QUOTE_EXPERIENCE_MOD_MAX, QUOTE_LINE_AREAS, QUOTE_LINES, QUOTE_PREMIUM_MAX } from "@/data/lines";
 import { AI_ERROR_CODES } from "../../supabase/functions/_shared/ai/errors";
 import { PEO_NAME_MAX } from "@/data/peoCatalog";
 import { REQUIRED_ITEMS } from "@/data/readiness";
@@ -320,6 +321,23 @@ describe("server and client intake rules agree", () => {
   // A quote's whole offer (20261124140000): the mark it carries.
   it("holds the same marks on a quote: an estimate or a firm offer", () => {
     expect(quoted(blocks("quote_kinds").join("\n"))).toEqual([...QUOTE_KINDS]);
+  });
+
+  // Lines (ADR 0029, 20261126090000): what an opportunity can be a search for.
+  it("holds the same lines an opportunity, an intake and a market can be of", () => {
+    expect(quoted(blocks("quote_lines").join("\n"))).toEqual([...QUOTE_LINES]);
+  });
+
+  it("holds the same cost areas for each line's quote, in the comparison's order", () => {
+    expect(quoted(blocks("quote_line_areas_peo").join("\n"))).toEqual([...QUOTE_LINE_AREAS.peo]);
+    expect(quoted(blocks("quote_line_areas_workers_comp").join("\n"))).toEqual([...QUOTE_LINE_AREAS.workers_comp]);
+    // Every line has its areas: a line added to the list without them would have a quote that holds nothing.
+    expect(Object.keys(QUOTE_LINE_AREAS).sort()).toEqual([...QUOTE_LINES].sort());
+  });
+
+  it("holds the same limits for a workers' comp quote's premium and experience modification", () => {
+    expect(Number(/(\d+)/.exec(blocks("quote_premium_max").join("\n"))?.[1])).toBe(QUOTE_PREMIUM_MAX);
+    expect(Number(/(\d+)/.exec(blocks("quote_experience_mod_max").join("\n"))?.[1])).toBe(QUOTE_EXPERIENCE_MOD_MAX);
   });
 
   it("holds the same bases an administrative fee is charged on", () => {
@@ -669,6 +687,12 @@ describe("server and client intake rules agree", () => {
   // word, so the email says what the composer previews and counsel's text stays one change.
   it("puts the legal-wording module's line on every message to a PEO", () => {
     expect(quoted(blocks("peo_send_notice").join("\n"))).toEqual([PEO_SEND_NOTICE]);
+  });
+
+  // ADR 0029, D-12: a message to a carrier carries its own line, never the PEO's; the database's copy (public.carrier_send_notice) must be the module's, word
+  // for word.
+  it("holds the same line that every message to a carrier carries", () => {
+    expect(quoted(blocks("carrier_send_notice").join("\n"))).toEqual([CARRIER_SEND_NOTICE]);
   });
 
   // M-2.3, D-1612: an update names what changed by each answer's label, the one the advisor's field review shows (FIELD_LABELS); the database writes

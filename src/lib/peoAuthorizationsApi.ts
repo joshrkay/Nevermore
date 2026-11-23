@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { PEO_AUTHORIZATION_VERSION, peoAuthorizationText, peoWithdrawalText } from "@/data/legalWording";
+import { lineOf, type QuoteLine } from "@/data/lines";
 
 export type PeoAuthorizationStateName = "authorized" | "withdrawn" | "not_asked";
 
@@ -35,6 +36,16 @@ export async function loadPeoAuthorizations(sessionId: string): Promise<PeoAutho
   const { data, error } = await supabase.rpc("peo_authorization_states", { p_session_id: sessionId });
   if (error) throw refused(error);
   return statesSchema.parse(data).map((r) => ({ peo: r.peo, state: r.state, signedAt: r.signed_at, wordingVersion: r.wording_version }));
+}
+
+/**
+ * What an intake is for (ADR 0029): its line, which the employer's own boxes are worded by. The employer reads their own intake, and a member of its firm
+ * reads it too. Throws when it can't be read; a row that names no line is a PEO intake.
+ */
+export async function loadIntakeLine(sessionId: string): Promise<QuoteLine> {
+  const { data, error } = await supabase.from("chamber_sessions").select("line").eq("id", sessionId).maybeSingle();
+  if (error) throw refused(error);
+  return lineOf((data as { line?: unknown } | null)?.line);
 }
 
 /** The employer authorizes (true) or withdraws (false) a PEO, under the wording in force. */

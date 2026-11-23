@@ -21,6 +21,7 @@ const { OpportunityError } = await import("@/lib/opportunityPageApi");
 // panel asks for the right opportunity, says what is happening while it waits and when it fails, and shows a saved note.
 
 const loaded: Comparison = {
+  line: "peo",
   canAdd: true,
   columns: [{ quoteRequestId: 1, peoName: "Insperity", status: "sent", quote: null }],
   notes: [],

@@ -92,6 +92,7 @@ const {
   recordQuote,
   fetchIsAdmin,
   loadPeoDirectory,
+  addPeo,
   loadPeoCatalogDirectory,
   fetchHasPlatformRole,
   loadVersionContacts,
@@ -419,6 +420,15 @@ describe("loadSubmission", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  // ADR 0029. Break caught: the submission's page not knowing a workers' comp intake from a PEO intake, so it offers PEOs to send it to; or failing on a
+  // database that has no lines yet, where the row has no line.
+  it("says what the intake is for: its line, and a PEO intake when the row has none", async () => {
+    tables.chamber_sessions = [row({ line: "workers_comp" })];
+    expect((await loadSubmission("s1"))!.line).toBe("workers_comp");
+    tables.chamber_sessions = [row()];
+    expect((await loadSubmission("s1"))!.line).toBe("peo");
+  });
+
   // The partner key is (firm, code): two firms may use the same code, and a member of both opens either one's submissions.
   it("names the referral partner of the submission's own firm when two of the caller's firms use the same code", async () => {
     tables.chamber_sessions = [row({ firm_id: "firm-b", referral_code: "acme" })];
@@ -619,6 +629,36 @@ describe("quote requests", () => {
     });
   });
 
+  // ADR 0029. Break caught: a carrier's premium, experience modification or minimum premium dropped on the way to the database, so the quote is recorded holding nothing.
+  it("sends a workers' comp quote's premium, experience modification and minimum premium", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 5, kind: "firm_offer" }, error: null });
+    await recordQuote(7, { kind: "firm_offer", annualPremium: 18450, experienceMod: 0.92, minimumPremium: 0, workersComp: [{ state: "OR", class_code: "2003", rate: 4.12 }] });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining({
+      p_annual_premium: 18450, p_experience_mod: 0.92, p_minimum_premium: 0, p_workers_comp: [{ state: "OR", class_code: "2003", rate: 4.12 }], p_admin_fee: null,
+    }));
+  });
+
+  // The site is deployed apart from the database (docs/SUPABASE_SETUP.md). Break caught: every PEO quote refused ("function not found") on a database that has no
+  // lines yet, because the call named three arguments a PEO's quote never uses.
+  it("names none of the workers' comp figures for a quote that holds none", async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 6, kind: "estimate" }, error: null });
+    await recordQuote(7, { kind: "estimate", adminFee: 45, adminFeeBasis: "per_employee_per_month" });
+    const sent = Object.keys(rpc.mock.calls.at(-1)![1] as object);
+    expect(sent.filter((k) => /premium|experience_mod/.test(k))).toEqual([]);
+  });
+
+  // ADR 0029. Break caught: a carrier's quote that gives only one of the three figures (a premium with no modification stated, or a minimum alone) saved without it,
+  // because the figures were only named when another of them was there.
+  it.each([
+    [{ annualPremium: 18450 }, { p_annual_premium: 18450, p_experience_mod: null, p_minimum_premium: null }],
+    [{ experienceMod: 1.05 }, { p_annual_premium: null, p_experience_mod: 1.05, p_minimum_premium: null }],
+    [{ minimumPremium: 0 }, { p_annual_premium: null, p_experience_mod: null, p_minimum_premium: 0 }],
+  ])("sends a workers' comp quote that holds only %j", async (figures, sent) => {
+    rpc.mockResolvedValueOnce({ data: { id: 5, kind: "estimate" }, error: null });
+    await recordQuote(7, { kind: "estimate", ...figures });
+    expect(rpc).toHaveBeenLastCalledWith("record_quote", expect.objectContaining(sent));
+  });
+
   // N-2.1. Break caught: a form that has no one-off fees sending [] (the database refuses it, so the agent can't save), or a quote with no workers' comp stored as quoted.
   it("sends an empty cost area as left out, not as an empty list", async () => {
     rpc.mockResolvedValueOnce({ data: { id: 4, kind: "estimate" }, error: null });
@@ -809,6 +849,23 @@ describe("the PEOs page's reads and writes", () => {
   it("says why when the catalogue can't be read", async () => {
     rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
     await expect(loadPeoCatalogDirectory()).rejects.toThrow();
+  });
+
+  // ADR 0029. Break caught: a carrier in the admin's directory read as a PEO; or a carrier added as a PEO because its line never reached the database; or, on a
+  // database that has no lines yet, every PEO refused because the call named an argument it does not have.
+  it("reads each market's line, adds a carrier with its line, and names no line when it adds a PEO", async () => {
+    tables.peos = [{ id: 1, name: "TriNet", listed: true }, { id: 9, name: "Granite Ridge Mutual", listed: true, line: "workers_comp" }];
+    tables.peo_profile_versions = [];
+    tables.peo_contacts = [];
+    selects.length = 0;
+    expect((await loadPeoDirectory()).map((p) => [p.name, p.line])).toEqual([["Granite Ridge Mutual", "workers_comp"], ["TriNet", "peo"]]);
+    // Every column is asked for, never the line by name: a database that has no lines yet has no such column, and naming it would fail the whole directory.
+    expect(selects.find((q) => q.table === "peos")?.columns).toBe("*");
+    rpc.mockResolvedValue({ data: { id: 10 }, error: null });
+    await addPeo("Tidewater Casualty", "workers_comp");
+    expect(rpc).toHaveBeenLastCalledWith("admin_add_peo", { p_name: "Tidewater Casualty", p_line: "workers_comp" });
+    await addPeo("Harbor PEO");
+    expect(rpc).toHaveBeenLastCalledWith("admin_add_peo", { p_name: "Harbor PEO" });
   });
 
   it("reads each PEO with its versions, newest first, and each version's contacts", async () => {

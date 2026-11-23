@@ -135,6 +135,9 @@ export type Database = {
           intake_consent_id: string | null
           // When the prospect last saved anything. Set by the database.
           last_activity_at: string
+          // What this intake is for (20261126090000, ADR 0029): its opportunity's line, one of QUOTE_LINES. Set by the database when the
+          // intake is made and never changed: the database keeps it whatever the browser sends.
+          line: string
           // The intake schema version chamber_data follows (supabase/functions/_shared/intakeSchema.ts).
           schema_version: number
           // The referral code and campaign tags of the link the intake started from (20261106100000): short codes
@@ -167,6 +170,7 @@ export type Database = {
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
+          line?: never
           referral_code?: string | null
           schema_version?: never
           started_by?: never
@@ -191,6 +195,7 @@ export type Database = {
           id?: string
           intake_consent_id?: never
           last_activity_at?: never
+          line?: never
           // The source is fixed when the intake is created: the database keeps it whatever an update sends.
           referral_code?: never
           schema_version?: never
@@ -536,18 +541,25 @@ export type Database = {
       // was not quoted (it is never an empty list or 0). The newest row of a quote request is its current quote.
       quotes: {
         Row: {
+          // A workers' comp quote's estimated annual premium in dollars, or null (20261126090000, ADR 0029). A quote holds only its
+          // line's areas (QUOTE_LINE_AREAS in src/data/lines.ts): the database refuses any other.
+          annual_premium: number | null
           // The fee in dollars per employee per month, or in percent of payroll, as admin_fee_basis says; null with its basis.
           admin_fee: number | null
           // One of QUOTE_ADMIN_FEE_BASES (src/data/quoteRequests.ts).
           admin_fee_basis: string | null
           // The mail attachment (quote_request_message_attachments.id) the PEO's quote document is, or null (20261125090000): a file stored and scanned on the quote request's own mail.
           document_attachment_id: number | null
+          // The experience modification a carrier applied, a factor from 0 to 10, or null (20261126090000).
+          experience_mod: number | null
           expires_on: string | null
           id: number
           // One of QUOTE_KINDS: an estimate or a firm offer.
           kind: string
           // Each { plan, tier, monthly }, or null.
           medical: Json | null
+          // A workers' comp quote's minimum premium in dollars, or null (20261126090000). 0 is a figure, not a blank.
+          minimum_premium: number | null
           note: string | null
           // Each { name, amount }, or null.
           one_off_fees: Json | null
@@ -575,6 +587,8 @@ export type Database = {
           created_at: string
           created_by: string | null
           id: number
+          // The line this market quotes (20261126090000, ADR 0029): 'peo' for a PEO, 'workers_comp' for a carrier. Never changed.
+          line: string
           // False once an admin stops listing the PEO; a PEO is never deleted.
           listed: boolean
           name: string
@@ -812,8 +826,9 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: Json
       }
+      // Adds a market (20261115090000; 20261126090000 adds its line, ADR 0029): a PEO when no line is named, a carrier for 'workers_comp'.
       admin_add_peo: {
-        Args: { p_name: string }
+        Args: { p_name: string; p_line?: string | null }
         Returns: Json
       }
       admin_save_peo_profile: {
@@ -1273,6 +1288,8 @@ export type Database = {
           p_firm_id?: string | null
           // Start the renewal (20261121160000, D-449): the renewal this opportunity works, linked in the same transaction.
           p_renewal_id?: string | null
+          // What is being quoted (20261126090000, ADR 0029): one of QUOTE_LINES. Left out, a PEO search.
+          p_line?: string | null
         }
         Returns: Json
       }
@@ -1587,9 +1604,13 @@ export type Database = {
         Args: {
           p_admin_fee?: number | null
           p_admin_fee_basis?: string | null
+          // A workers' comp quote's figures (20261126090000, ADR 0029); refused on a PEO's quote.
+          p_annual_premium?: number | null
+          p_experience_mod?: number | null
           p_expires_on?: string | null
           p_kind: string
           p_medical?: Json | null
+          p_minimum_premium?: number | null
           p_note?: string | null
           p_one_off_fees?: Json | null
           p_quote_request_id: number

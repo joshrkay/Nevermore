@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { quoteKindLabel } from "@/data/quoteRequests";
 import { formatDay, quoteStatusLabel, today } from "@/data/accountPage";
-import { COMPARISON_AREAS, type ComparisonArea, ComparisonColumn, ComparisonNote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
+import { lineOf, MARKET_WORDS, QUOTE_LINE_AREAS, type QuoteLine } from "@/data/lines";
+import { type ComparisonArea, ComparisonColumn, ComparisonNote, NewComparisonNote, QuoteComparison as Comparison } from "@/lib/quoteComparisonApi";
 
-// The broker's comparison of an opportunity's quotes (N-3.1, slice 7.7): one column for each PEO, one row for each cost area, the same rows for every PEO.
+// The broker's comparison of an opportunity's quotes (N-3.1, slice 7.7): one column for each PEO (each carrier, on a workers' comp search), one row for each cost
+// area of the opportunity's line (ADR 0029, QUOTE_LINE_AREAS), the same rows for every column.
 
 /** What a quote leaves out reads this, never 0 or blank (D-721). */
 const NOT_QUOTED = <span className="text-muted-foreground">Not quoted</span>;
@@ -24,10 +26,12 @@ const lines = <T,>(items: T[] | null | undefined, words: (item: T) => string) =>
 
 const AREA_WORDS: Record<ComparisonArea, string> = {
   admin_fee: "administrative fee", one_off_fees: "one-off fees", workers_comp: "workers' comp", unemployment: "unemployment tax", medical: "medical",
+  annual_premium: "annual premium", experience_mod: "experience modification", minimum_premium: "minimum premium",
 };
 
 const AREA_LABELS: Record<ComparisonArea, string> = {
   admin_fee: "Administrative fee", one_off_fees: "One-off fees", workers_comp: "Workers' comp", unemployment: "Unemployment tax", medical: "Medical",
+  annual_premium: "Annual premium", experience_mod: "Experience modification", minimum_premium: "Minimum premium",
 };
 
 /** What a note is about: a PEO, and within it a cost area, or the comparison as a whole. */
@@ -38,7 +42,8 @@ const aboutWords = (n: ComparisonNote, columns: ComparisonColumn[]) => {
 
 type Row = { label: string; cell: (c: ComparisonColumn) => React.ReactNode };
 
-const ROWS: Row[] = [
+/** What every comparison starts with, whatever its line: where each column stands and when its quote expires. */
+const STANDING_ROWS: Row[] = [
   { label: "Status", cell: (c) => (c.quote ? quoteKindLabel(c.quote.kind) : quoteStatusLabel(c.status)) },
   {
     label: "Expires",
@@ -49,18 +54,25 @@ const ROWS: Row[] = [
       return c.quote.expiresOn < today() ? <span className="font-medium text-destructive">Expired {formatDay(c.quote.expiresOn)}</span> : formatDay(c.quote.expiresOn);
     },
   },
-  { label: "Administrative fee", cell: (c) => (c.quote?.adminFee != null ? feeWords(c.quote.adminFee, c.quote.adminFeeBasis) : NOT_QUOTED) },
-  { label: "One-off fees", cell: (c) => lines(c.quote?.oneOffFees, (f) => `${f.name}: ${dollars(f.amount)}`) },
-  { label: "Workers' comp", cell: (c) => lines(c.quote?.workersComp, (w) => `${w.state} ${w.classCode}: ${dollars(w.rate)} per $100 of payroll`) },
-  {
-    label: "Unemployment tax",
-    cell: (c) => lines(c.quote?.unemployment, (u) => (u.charge === "peo_rate" ? `${u.state}: the PEO's rate, ${u.rate}% of taxable wages` : `${u.state}: the employer's own rate`)),
-  },
-  { label: "Medical", cell: (c) => lines(c.quote?.medical, (m) => `${m.plan}, ${TIER_WORDS[m.tier] ?? m.tier}: ${dollars(m.monthly)} a month`) },
 ];
 
+/** How each cost area is drawn in a column. A figure a quote leaves out is Not quoted; 0 is a figure (D-721). */
+const AREA_CELLS: Record<ComparisonArea, (c: ComparisonColumn) => React.ReactNode> = {
+  admin_fee: (c) => (c.quote?.adminFee != null ? feeWords(c.quote.adminFee, c.quote.adminFeeBasis) : NOT_QUOTED),
+  one_off_fees: (c) => lines(c.quote?.oneOffFees, (f) => `${f.name}: ${dollars(f.amount)}`),
+  workers_comp: (c) => lines(c.quote?.workersComp, (w) => `${w.state} ${w.classCode}: ${dollars(w.rate)} per $100 of payroll`),
+  unemployment: (c) => lines(c.quote?.unemployment, (u) => (u.charge === "peo_rate" ? `${u.state}: the PEO's rate, ${u.rate}% of taxable wages` : `${u.state}: the employer's own rate`)),
+  medical: (c) => lines(c.quote?.medical, (m) => `${m.plan}, ${TIER_WORDS[m.tier] ?? m.tier}: ${dollars(m.monthly)} a month`),
+  annual_premium: (c) => (c.quote?.annualPremium != null ? `${dollars(c.quote.annualPremium)} a year` : NOT_QUOTED),
+  experience_mod: (c) => (c.quote?.experienceMod != null ? String(c.quote.experienceMod) : NOT_QUOTED),
+  minimum_premium: (c) => (c.quote?.minimumPremium != null ? dollars(c.quote.minimumPremium) : NOT_QUOTED),
+};
+
+/** The rows of a comparison: where each column stands, then one row for each cost area of the line, in the line's order. */
+const rowsOf = (line: QuoteLine): Row[] => [...STANDING_ROWS, ...QUOTE_LINE_AREAS[line].map((area) => ({ label: AREA_LABELS[area], cell: AREA_CELLS[area] }))];
+
 /** The form for a note (N-3.2). Internal unless the broker marks it for the client. */
-function NoteForm({ columns, onAddNote }: { columns: ComparisonColumn[]; onAddNote: (note: NewComparisonNote) => Promise<void> }) {
+function NoteForm({ line, columns, onAddNote }: { line: QuoteLine; columns: ComparisonColumn[]; onAddNote: (note: NewComparisonNote) => Promise<void> }) {
   const [body, setBody] = useState("");
   const [peo, setPeo] = useState<number | null>(null);
   const [area, setArea] = useState<ComparisonArea | null>(null);
@@ -91,7 +103,7 @@ function NoteForm({ columns, onAddNote }: { columns: ComparisonColumn[]; onAddNo
           <label htmlFor="comparison-note-area" className="block text-xs text-muted-foreground">Cost area</label>
           <select id="comparison-note-area" className={select} value={area ?? ""} onChange={(e) => setArea(e.target.value === "" ? null : (e.target.value as ComparisonArea))}>
             <option value="">No particular area</option>
-            {COMPARISON_AREAS.map((a) => <option key={a} value={a}>{AREA_LABELS[a]}</option>)}
+            {QUOTE_LINE_AREAS[line].map((a) => <option key={a} value={a}>{AREA_LABELS[a]}</option>)}
           </select>
         </div>
       </div>
@@ -114,10 +126,12 @@ export function QuoteComparison({ comparison, onAddNote, noNotesBecause }: {
   /** Why no note can be added when the account itself takes notes (a Nevermore support session changes nothing, ADR 0024); said in place of the form. */
   noNotesBecause?: string;
 }) {
+  // A comparison that names no line is a PEO search's (lineOf), so a read that lacks it draws as every comparison did before lines.
+  const line = lineOf(comparison.line);
   return (
     <ListPanel id="quote-comparison" heading="Compare quotes">
       {comparison.columns.length === 0 ? (
-        <EmptyLine>No quotes to compare yet. Quotes appear here once the opportunity is sent to a PEO.</EmptyLine>
+        <EmptyLine>No quotes to compare yet. Quotes appear here once the opportunity is sent to {MARKET_WORDS[line].a}.</EmptyLine>
       ) : (
       <>
         {comparison.columns.every((c) => c.quote === null) && <p className="mb-3 text-sm text-muted-foreground">No quotes are back yet.</p>}
@@ -132,7 +146,7 @@ export function QuoteComparison({ comparison, onAddNote, noNotesBecause }: {
             </tr>
           </thead>
           <tbody>
-            {ROWS.map((row) => (
+            {rowsOf(line).map((row) => (
               <tr key={row.label} className="border-t border-border/60 align-top">
                 <th scope="row" className="py-2 pr-4 text-left font-normal text-muted-foreground">{row.label}</th>
                 {comparison.columns.map((c) => <td key={c.quoteRequestId} className="py-2 pr-4">{row.cell(c)}</td>)}
@@ -156,7 +170,7 @@ export function QuoteComparison({ comparison, onAddNote, noNotesBecause }: {
           ))}
         </ul>
         {comparison.canAdd && !noNotesBecause ? (
-          <NoteForm columns={comparison.columns} onAddNote={onAddNote} />
+          <NoteForm line={line} columns={comparison.columns} onAddNote={onAddNote} />
         ) : (
           <p className="mt-3 text-sm text-muted-foreground">{noNotesBecause ?? "This account is archived, so notes can't be added."}</p>
         )}

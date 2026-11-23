@@ -1,3 +1,4 @@
+import { lineOf } from "@/data/lines";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -199,7 +200,8 @@ const Detail = ({
 }) => {
   // The PEOs and their profiles in use, from the database: the quote requests' fit checks, the packet's checks and
   // the census layouts read them.
-  const peoCatalog = usePeoCatalog();
+  // Those of the intake's own line (ADR 0029): PEOs for a PEO intake, carriers for a workers' comp intake.
+  const peoCatalog = usePeoCatalog(true, lineOf(detail.line));
   // A thread marked read clears the mark on the queue; the menu's Inbox count follows at once, not at its next refresh (story CRM-S1.1c).
   const queryClient = useQueryClient();
   const refreshMenuCounts = useCallback(() => void queryClient.invalidateQueries({ queryKey: [...MENU_COUNTS_KEY] }), [queryClient]);
@@ -277,6 +279,7 @@ const Detail = ({
         <div className="space-y-6 min-w-0">
           {detail.signed && <ChangedSinceSigning detail={detail} signed={detail.signed} />}
           <PeoNeedsPanel
+            line={lineOf(detail.line)}
             certified={certifiedVersion}
             catalog={peoCatalog.peos}
             catalogStatus={peoCatalog.status}

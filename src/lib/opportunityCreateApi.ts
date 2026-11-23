@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyApiError } from "@/lib/advisorApi";
+import type { QuoteLine } from "@/data/lines";
 
 // What the New opportunity form asks the database (story CRM-A2.3, screen 25; 20261120130000_opportunity_create.sql). Two calls: what the form needs (the
 // account, its contacts, the firm's referral partners, the people who may own it) and the making. The database decides every rule: who may see an account, an
@@ -97,6 +98,8 @@ export interface NewOpportunity {
   ownerId: string | null;
   /** The renewal this opportunity starts (D-449): it is linked in the same save. Null for an ordinary new opportunity. */
   renewalId?: string | null;
+  /** What is being quoted (ADR 0029). Left out, the opportunity is a PEO search. */
+  line?: QuoteLine;
 }
 
 const madeSchema = z.object({
@@ -128,6 +131,9 @@ export async function createOpportunity(firmId: string, accountId: string, o: Ne
     p_owner_id: o.ownerId,
     p_firm_id: firmId,
     p_renewal_id: o.renewalId ?? null,
+    // The line is named only when it is not a PEO search, the database's own default (ADR 0029): the site is deployed apart from the database, and a
+    // database that has no lines yet has no such argument and would refuse every new opportunity that named it.
+    ...(o.line && o.line !== "peo" ? { p_line: o.line } : {}),
   });
   if (error) throw refusal(error, SAVE_FALLBACK);
   const parsed = madeSchema.safeParse(data);

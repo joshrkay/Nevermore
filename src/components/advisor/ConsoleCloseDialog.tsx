@@ -2,6 +2,7 @@ import { useContext, useEffect, useState } from "react";
 import { CloseOpportunityDialog } from "@/components/opportunities/CloseOpportunityDialog";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { STAGE_LABELS } from "@/data/accountPage";
+import { lineOf } from "@/data/lines";
 import type { TellMessage } from "@/data/opportunityClose";
 import { getFirmName, getOpportunityOutcome, getOpportunityPage, type OpportunityOutcome, type OpportunityPage } from "@/lib/opportunityPageApi";
 
@@ -54,6 +55,7 @@ export function ConsoleCloseDialog({ firmId, opportunityId, initial, mail, onClo
   }
   return (
     <CloseOpportunityDialog
+      line={lineOf(o.line)}
       firmId={firmId}
       target={{ id: o.id, version: o.version, name: o.name, targetStart: o.targetStart, employees: o.employees ?? page.intake?.censusSize ?? null }}
       accountName={page.account.name}

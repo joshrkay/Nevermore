@@ -82,6 +82,19 @@ describe("New quote step 4: choose PEOs (CRM-Q2.5, D-1763)", () => {
     expect(within(dialog).getByRole("button", { name: "Save and close" })).toBeInTheDocument();
   });
 
+  // Catches: New quote's last step offering PEOs for a workers' comp search (the database refuses each), or naming its carriers PEOs (ADR 0029).
+  it("opens on the carriers for a workers' comp search, and offers no PEO", async () => {
+    peoCatalogRows = [justworks, { id: 9, name: "Granite Ridge Mutual", line: "workers_comp", profile: { version: 1, needed_to_quote: ["company_name"], sources: { answers: sourced } } }];
+    const p = page();
+    getOpportunityPage.mockResolvedValue({ ...p, opportunity: { ...p.opportunity, name: "March 2027 workers' comp search", line: "workers_comp" } });
+    peoAuthorizations.loadPeoAuthorizations.mockResolvedValue([{ peo: "Granite Ridge Mutual", state: "authorized", signedAt: null, wordingVersion: null }]);
+    const dialog = await open();
+    const sending = await within(dialog).findByRole("region", { name: "Send to several carriers" });
+    expect(await within(sending).findByRole("checkbox", { name: "Granite Ridge Mutual" })).toBeChecked();
+    expect(within(sending).queryByRole("checkbox", { name: "Justworks" })).toBeNull();
+    expect(within(dialog).queryByRole("region", { name: "Send to several PEOs" })).toBeNull();
+  });
+
   // Catches: a send from the overlay that leaves the overlay's own read of the opportunity as it was, so what it shows (quotes sent, stage) is stale after the send.
   it("reads the opportunity again once a send has gone", async () => {
     peoSend.sendToPeo.mockResolvedValue({ quoteRequestId: 1, messageId: 2 });

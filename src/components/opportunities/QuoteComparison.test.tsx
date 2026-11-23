@@ -12,9 +12,10 @@ const { QuoteComparison } = await import("./QuoteComparison");
 
 const quote = (over: Partial<ComparedQuote> = {}): ComparedQuote => ({
   id: 1, kind: "firm_offer", receivedOn: "2026-11-10", expiresOn: "2099-12-10", proposedStartOn: "2027-01-01", adminFee: 40, adminFeeBasis: "per_employee_per_month",
-  oneOffFees: null, workersComp: null, unemployment: null, medical: null, note: null, ...over,
+  oneOffFees: null, workersComp: null, unemployment: null, medical: null, note: null, annualPremium: null, experienceMod: null, minimumPremium: null, ...over,
 });
 const comparison = (over: Partial<Comparison> = {}): Comparison => ({
+  line: "peo",
   canAdd: true,
   columns: [
     { quoteRequestId: 1, peoName: "Insperity", status: "quoted", quote: quote() },
@@ -256,5 +257,53 @@ describe("the comparison's frame", () => {
     expect(within(table).getAllByRole("rowheader").map((h) => h.textContent)).toEqual([
       "Status", "Expires", "Administrative fee", "One-off fees", "Workers' comp", "Unemployment tax", "Medical",
     ]);
+  });
+});
+
+describe("a workers' comp search's comparison (ADR 0029)", () => {
+  /** Two carriers on a workers' comp search: one that quoted, with a minimum premium of 0, and one still out. */
+  const carriers = (): Comparison => comparison({
+    line: "workers_comp",
+    columns: [
+      { quoteRequestId: 5, peoName: "Granite Ridge Mutual", status: "quoted", quote: quote({
+        id: 9, adminFee: null, adminFeeBasis: null, annualPremium: 18450, experienceMod: 0.92, minimumPremium: 0, workersComp: [{ state: "OR", classCode: "2003", rate: 4.12 }],
+      }) },
+      { quoteRequestId: 6, peoName: "Tidewater Casualty", status: "sent", quote: null },
+    ],
+  });
+  const rowHeaders = () => within(screen.getByRole("table", { name: "Quotes side by side" })).getAllByRole("rowheader").map((th) => th.textContent);
+
+  // Catches: carriers compared on a PEO's rows (an administrative fee, unemployment and medical nobody quoted, all "Not quoted") with the premium shown nowhere.
+  it("has the rows of a workers' comp quote, in its own order, and none a PEO alone quotes", () => {
+    draw(carriers());
+    expect(rowHeaders()).toEqual(["Status", "Expires", "Annual premium", "Workers' comp", "Experience modification", "Minimum premium", "One-off fees"]);
+  });
+
+  // Catches: a premium drawn without dollars, a 0 minimum premium drawn as Not quoted (D-721), or a carrier that has not quoted drawn blank.
+  it("draws each figure in words, a minimum premium of 0 as $0.00, and Not quoted for a carrier with no quote yet", () => {
+    draw(carriers());
+    expect(cells("Annual premium").map((c) => c.textContent)).toEqual(["$18,450.00 a year", "Not quoted"]);
+    expect(cells("Experience modification").map((c) => c.textContent)).toEqual(["0.92", "Not quoted"]);
+    expect(cells("Minimum premium").map((c) => c.textContent)).toEqual(["$0.00", "Not quoted"]);
+    expect(cells("Workers' comp")[0].textContent).toBe("OR 2003: $4.12 per $100 of payroll");
+  });
+
+  // Catches: a note offered an area the comparison has no row for (the database refuses it), or no way to note the premium.
+  it("offers a note the areas of a workers' comp quote, and sends the one chosen", async () => {
+    const onAddNote = vi.fn().mockResolvedValue(undefined);
+    draw(carriers(), onAddNote);
+    const area = screen.getByLabelText("Cost area");
+    expect(within(area).getAllByRole("option").map((o) => o.textContent)).toEqual(
+      ["No particular area", "Annual premium", "Workers' comp", "Experience modification", "Minimum premium", "One-off fees"]);
+    await userEvent.selectOptions(area, "annual_premium");
+    await userEvent.type(screen.getByLabelText("Note"), "Includes the audit");
+    await userEvent.click(screen.getByRole("button", { name: "Add note" }));
+    await waitFor(() => expect(onAddNote).toHaveBeenCalledWith({ quoteRequestId: null, area: "annual_premium", visibility: "internal", body: "Includes the audit" }));
+  });
+
+  // Catches: the empty comparison of a workers' comp search telling the broker to send to a PEO.
+  it("says quotes appear once the opportunity is sent to a carrier", () => {
+    draw(comparison({ line: "workers_comp", columns: [] }));
+    expect(screen.getByText("No quotes to compare yet. Quotes appear here once the opportunity is sent to a carrier.")).toBeInTheDocument();
   });
 });

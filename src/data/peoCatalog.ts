@@ -1,3 +1,4 @@
+import type { QuoteLine } from "@/data/lines";
 import type { ChamberData } from "./chamberTypes";
 import { headcount } from "./headcount";
 import { capitalised, codesPhrase, isProfileStale, notCheckedYet, PART_LABELS, RULE_KEYS, RULE_PARTS_IN_ORDER, type RequirementProfile } from "./peoProfiles";
@@ -11,6 +12,11 @@ export interface PeoRecord {
   /** The PEO's id in the database. */
   id?: number;
   name: string;
+  /**
+   * The line this market quotes (ADR 0029): a PEO, or a carrier for workers' comp. A PEO when not said: every market was one before lines, and every record
+   * written by hand in a test or a fixture still is.
+   */
+  line?: QuoteLine;
   /** False once an admin stops listing the PEO: nothing offers it, but what was sent to it still reads. */
   listed: boolean;
   /** ISO date of the oldest check behind the profile in use (each part is checked on its own date). */

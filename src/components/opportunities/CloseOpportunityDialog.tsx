@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { dateRule, Field, FormActions, SaveRefused, SelectInput, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import { formatDay, STAGE_LABELS } from "@/data/accountPage";
+import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
 import { isConflict } from "@/lib/recordVersion";
 import { adminFeeWords, opportunityFieldLabel } from "@/data/opportunityPage";
-import { changedLine, commissionProblems, LOST_REASONS, peosToTell, renewalAfter, withdrawalSubject, type TellMessage } from "@/data/opportunityClose";
+import { changedLine, commissionProblems, lostReasons, peosToTell, renewalAfter, withdrawalSubject, type TellMessage } from "@/data/opportunityClose";
 import { closingWithdrawalNote, peoNames } from "@/data/peoFollowUp";
 import { isOpenQuoteRequest } from "@/data/quoteRequests";
 import { CommissionFields } from "./CommissionFields";
@@ -62,9 +63,11 @@ export interface CloseTarget {
   employees: number | null;
 }
 
-export function CloseOpportunityDialog({ firmId, target, accountName, quotes, proposedStarts, brokerDefault, initial, mail, onClose, onDone }: {
+export function CloseOpportunityDialog({ firmId, target, line = "peo", accountName, quotes, proposedStarts, brokerDefault, initial, mail, onClose, onDone }: {
   firmId: string;
   target: CloseTarget;
+  /** What the opportunity is a search for (ADR 0029): a PEO search unless said. It names who is still open: PEOs, or carriers. */
+  line?: QuoteLine;
   accountName: string;
   quotes: readonly OpportunityQuote[];
   /** By quote request id: the start the PEO proposed, the win's default start (D-465). */
@@ -105,7 +108,7 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
     version: target.version,
     save: async (v, started): Promise<OpportunityClosed | OpportunityCloseConflict> => {
       if (started.version === undefined) throw new SaveRefused("Couldn't save. Reload the page and try again.");
-      if (mail.status === "loading") throw new SaveRefused("Still checking which PEOs are open. Try again in a moment.");
+      if (mail.status === "loading") throw new SaveRefused(`Still checking which ${MARKET_WORDS[line].many} are open. Try again in a moment.`);
       try {
         if (v.outcome === "lost") return await markOpportunityLost(firmId, target.id, { reason: v.reason, note: v.note }, started.version, toldFor(v.outcome, v.quote).length > 0 && tell ? withdrawalFor(toldFor(v.outcome, v.quote)) : undefined);
         const commission: PlacementCommission | null = v.commission_basis === "" ? null : {
@@ -247,7 +250,7 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
                     {(field) => (
                       <SelectInput {...field}>
                         <option value="">Choose a reason</option>
-                        {LOST_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                        {lostReasons(line).map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                       </SelectInput>
                     )}
                   </Field>
@@ -255,11 +258,11 @@ export function CloseOpportunityDialog({ firmId, target, accountName, quotes, pr
                 </>
               )}
               {mail.status === "failed" && outcome !== "" && (
-                <p role="status" className="text-sm text-muted-foreground">We couldn't check which PEOs are still open, so no withdrawal is offered. Their links stop working either way.</p>
+                <p role="status" className="text-sm text-muted-foreground">{`We couldn't check which ${MARKET_WORDS[line].many} are still open, so no withdrawal is offered. Their links stop working either way.`}</p>
               )}
               {told.length > 0 && (
                 <fieldset className="space-y-2 rounded-md border border-border p-3">
-                      <legend className="px-1 text-xs font-medium">Tell the PEOs still open</legend>
+                      <legend className="px-1 text-xs font-medium">{`Tell the ${MARKET_WORDS[line].many} still open`}</legend>
                       <label className="flex items-start gap-2 text-sm">
                         <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} className="mt-1" />
                         <span>{`Send a withdrawal to ${peoNames(told.map((q) => q.peo_name))}`}</span>

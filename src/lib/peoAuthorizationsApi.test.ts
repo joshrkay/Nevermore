@@ -8,12 +8,13 @@ const chain = {
   select: (...a: unknown[]) => (asked.push(["select", ...a]), chain),
   eq: (...a: unknown[]) => (asked.push(["eq", ...a]), chain),
   order: (...a: unknown[]) => (asked.push(["order", ...a]), Promise.resolve(rows)),
+  maybeSingle: () => Promise.resolve(rows),
 };
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: { rpc: (...a: unknown[]) => rpc(...a), from: (table: string) => (asked.push(["from", table]), chain) },
 }));
 
-const { endFirmAccess, listMyCertifiedIntakes, listMyIntakeFirms, loadPeoAuthorizations, setPeoAuthorization } = await import("./peoAuthorizationsApi");
+const { endFirmAccess, listMyCertifiedIntakes, listMyIntakeFirms, loadIntakeLine, loadPeoAuthorizations, setPeoAuthorization } = await import("./peoAuthorizationsApi");
 
 beforeEach(() => {
   rpc.mockReset();
@@ -117,5 +118,25 @@ describe("listMyIntakeFirms", () => {
       error: null,
     });
     expect(await listMyIntakeFirms()).toMatchObject([{ id: "s1", firm: "Acme Brokers", invitedBy: "Ana Agent", invitedAt: new Date("2026-11-20T10:00:00Z") }]);
+  });
+});
+
+describe("loadIntakeLine (ADR 0029)", () => {
+  // Break caught: the employer's boxes worded for a PEO on a workers' comp intake, because the line was read from another row or never read; or an intake
+  // whose row names no line (a database with no lines yet answers the row without it) read as anything but a PEO intake.
+  it("reads the line of that intake, and a PEO intake when its row names none", async () => {
+    rows = { data: { line: "workers_comp" }, error: null };
+    await expect(loadIntakeLine("s1")).resolves.toBe("workers_comp");
+    expect(asked).toEqual([["from", "chamber_sessions"], ["select", "line"], ["eq", "id", "s1"]]);
+    rows = { data: {}, error: null };
+    await expect(loadIntakeLine("s1")).resolves.toBe("peo");
+    rows = { data: null, error: null };
+    await expect(loadIntakeLine("s1")).resolves.toBe("peo");
+  });
+
+  // Break caught: a read that failed taken for an answer, so the caller can't tell "a PEO intake" from "not known".
+  it("fails with the database's words when the line can't be read", async () => {
+    rows = { data: null, error: { code: "42703", message: "column chamber_sessions.line does not exist" } };
+    await expect(loadIntakeLine("s1")).rejects.toMatchObject({ message: "column chamber_sessions.line does not exist" });
   });
 });

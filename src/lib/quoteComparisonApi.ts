@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
+import { lineOf, QUOTE_LINE_AREAS, type QuoteArea, type QuoteLine } from "@/data/lines";
 import type { QuoteAdminFeeBasis, QuoteKind } from "@/data/quoteRequests";
 import { OpportunityError } from "@/lib/opportunityPageApi";
 
 // The comparison of an opportunity's quotes and the notes on it (N-3.1, N-3.2, slice 7.7; 20261125110000_quote_comparison.sql). One read, `opportunity_quote_comparison`,
-// answers one column for each PEO with its current quote; a cost area a quote leaves out is null, never an empty list or 0 (D-721), and stays null here.
+// answers one column for each PEO (or, on a workers' comp search, each carrier: ADR 0029) with its current quote; a cost area a quote leaves out is null, never an
+// empty list or 0 (D-721), and stays null here. The comparison says its opportunity's line, and the screen draws that line's areas (QUOTE_LINE_AREAS).
 
 export interface OneOffFee { name: string; amount: number }
 export interface WorkersCompRate { state: string; classCode: string; rate: number }
@@ -25,12 +27,18 @@ export interface ComparedQuote {
   unemployment: UnemploymentLine[] | null;
   medical: MedicalRate[] | null;
   note: string | null;
+  /** A workers' comp quote's figures (ADR 0029): the estimated annual premium and the minimum premium in dollars, and the experience modification applied. */
+  annualPremium: number | null;
+  experienceMod: number | null;
+  minimumPremium: number | null;
 }
 
 export interface ComparisonColumn { quoteRequestId: number; peoName: string; status: string; quote: ComparedQuote | null }
 
-export const COMPARISON_AREAS = ["admin_fee", "one_off_fees", "workers_comp", "unemployment", "medical"] as const;
-export type ComparisonArea = (typeof COMPARISON_AREAS)[number];
+/** What a note can be about: one of the cost areas of the comparison's own line (the database refuses any other). */
+export type ComparisonArea = QuoteArea;
+/** Every area any line's quote holds, for reading a note's area whatever the comparison's line. */
+const EVERY_AREA = [...new Set(Object.values(QUOTE_LINE_AREAS).flat())] as [QuoteArea, ...QuoteArea[]];
 
 export interface ComparisonNote {
   id: number;
@@ -42,7 +50,13 @@ export interface ComparisonNote {
   createdAt: string;
 }
 
-export interface QuoteComparison { canAdd: boolean; columns: ComparisonColumn[]; notes: ComparisonNote[] }
+export interface QuoteComparison {
+  /** What the opportunity is a search for: a PEO search when the answer names no line (a database that has no lines yet). */
+  line: QuoteLine;
+  canAdd: boolean;
+  columns: ComparisonColumn[];
+  notes: ComparisonNote[];
+}
 
 // The app is not compiled with strict null checks, so zod infers each key of an object as optional; the shapes below require each one, and the casts say so.
 const text = z.string().nullable();
@@ -54,12 +68,15 @@ const quoteShape = z.object({
   unemployment: z.array(z.object({ state: z.string(), charge: z.enum(["employer_rate", "peo_rate"]), rate: z.number().optional() })).nullable(),
   medical: z.array(z.object({ plan: z.string(), tier: z.string(), monthly: z.number() })).nullable(),
   note: text,
+  // Missing in an answer from a database that has no lines yet: read as left out.
+  annual_premium: z.number().nullish(), experience_mod: z.number().nullish(), minimum_premium: z.number().nullish(),
 });
 const answerShape = z.object({
+  line: z.string().nullish(),
   can_add: z.boolean(),
   columns: z.array(z.object({ quote_request_id: z.number().int(), peo_name: z.string(), status: z.string(), quote: quoteShape.nullable() })),
   notes: z.array(z.object({
-    id: z.number().int(), quote_request_id: z.number().int().nullable(), area: z.enum(COMPARISON_AREAS).nullable(), visibility: z.enum(["internal", "client"]),
+    id: z.number().int(), quote_request_id: z.number().int().nullable(), area: z.enum(EVERY_AREA).nullable(), visibility: z.enum(["internal", "client"]),
     body: z.string(), author: text, created_at: z.string(),
   })),
 });
@@ -91,6 +108,7 @@ export async function getQuoteComparison(firmId: string, opportunityId: string):
   if (!parsed.success) throw new OpportunityError("failed", FALLBACK);
   const a = parsed.data;
   return {
+    line: lineOf(a.line),
     canAdd: a.can_add,
     columns: a.columns.map((c) => ({
       quoteRequestId: c.quote_request_id, peoName: c.peo_name, status: c.status,
@@ -99,6 +117,7 @@ export async function getQuoteComparison(firmId: string, opportunityId: string):
         adminFee: c.quote.admin_fee, adminFeeBasis: c.quote.admin_fee_basis, oneOffFees: c.quote.one_off_fees as OneOffFee[] | null,
         workersComp: c.quote.workers_comp && c.quote.workers_comp.map((w) => ({ state: w.state as string, classCode: w.class_code as string, rate: w.rate as number })),
         unemployment: c.quote.unemployment as UnemploymentLine[] | null, medical: c.quote.medical as MedicalRate[] | null, note: c.quote.note,
+        annualPremium: c.quote.annual_premium ?? null, experienceMod: c.quote.experience_mod ?? null, minimumPremium: c.quote.minimum_premium ?? null,
       },
     })),
     notes: a.notes.map((n) => ({ id: n.id, quoteRequestId: n.quote_request_id, area: n.area, visibility: n.visibility, body: n.body, author: n.author, createdAt: n.created_at })),
