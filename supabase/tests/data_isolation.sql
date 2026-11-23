@@ -270,6 +270,7 @@
 \i supabase/migrations/20261125130000_broker_save_whole_form.sql
 \i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
 \i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
+\i supabase/migrations/20261126090000_lines.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1432,6 +1433,7 @@ INSERT INTO callable VALUES
                                                                      'browser failure reports, signed-out visitors included; redacted, capped, keeps only a session the caller can see'),
   ('intake_consent_version()',                 'anyone',  NULL, 'a constant: the consent wording in force'),
   ('is_source_code(p_code text)',              'anyone',  NULL, 'pure: whether a referral or campaign code is well formed; the intake source check constraints call it as the writer'),
+  ('quote_lines()',                            'anyone',  NULL, 'a constant: the lines an opportunity, an intake and a market can be of (ADR 0029); their check constraints call it as the writer'),
   ('intake_missing_required(d jsonb)',         'helper',  NULL, 'the certification gate''s trigger calls it as the signed-in prospect; pure: required answers missing from the jsonb it is given'),
   ('intake_answers_present(p_data jsonb)',     'helper',  NULL, 'pure: which answers the jsonb it is given holds; behind intake_missing_required and intake_required_items'),
   ('intake_required_items(p_data jsonb, p_provenance jsonb, p_verified text[])', 'helper', NULL, 'pure: each required item''s state for the jsonb it is given; behind the advisor queue (B-2.2)'),
@@ -1489,8 +1491,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.advisor_record_quote_send(%1$L, ''Justworks'', NULL)', 'recording a send to a PEO'),
   ('advisor_update_quote_request(p_quote_request_id bigint, p_status text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee_pepm numeric, p_note text, p_decline_reason text, p_decline_words text)', 'advisor',
                                                                      'SELECT public.advisor_update_quote_request(0, ''declined'')', 'recording a PEO''s answer'),
-  ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text)', 'advisor',
-                                                                     'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO returned, with its whole offer'),
+  ('record_quote(p_quote_request_id bigint, p_kind text, p_received_on date, p_expires_on date, p_start_on date, p_admin_fee numeric, p_admin_fee_basis text, p_one_off_fees jsonb, p_workers_comp jsonb, p_unemployment jsonb, p_medical jsonb, p_note text, p_annual_premium numeric, p_experience_mod numeric, p_minimum_premium numeric)', 'advisor',
+                                                                     'SELECT public.record_quote(0, ''estimate'')', 'recording a quote a PEO or a carrier returned, with its whole offer, of the shape its line''s quotes have (ADR 0029)'),
   ('attach_quote_document(p_quote_id bigint, p_attachment_id bigint)', 'advisor',
                                                                      'SELECT public.attach_quote_document(0, 0)', 'naming a stored mail file as a quote''s document (N-2.2)'),
   ('start_quote_document_upload(p_quote_id bigint, p_file_name text, p_content_type text, p_size_bytes bigint)', 'advisor',
@@ -1564,7 +1566,7 @@ INSERT INTO callable VALUES
   ('admin_assignable_quote_requests()',      'admin',   'SELECT count(*) FROM public.admin_assignable_quote_requests()', 'the quote requests held mail may be assigned to: File ID and PEO only (D-16)'),
   ('admin_ops_summary(p_hours integer)',       'admin',   'SELECT count(*) FROM public.admin_ops_summary(24)', 'monitoring counts'),
   ('peo_catalog()',                            'signed_in', NULL, 'the PEOs and each one''s published profile; never a contact or an admin''s id, and for anyone but an advisor no person''s name'),
-  ('admin_add_peo(p_name text)',               'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a PEO'),
+  ('admin_add_peo(p_name text, p_line text)',  'admin',   'SELECT public.admin_add_peo(''Probe PEO'')', 'adding a market: a PEO, or a carrier for workers'' comp (ADR 0029)'),
   ('admin_save_peo_profile(p_peo_id bigint, p_profile jsonb, p_draft_revision uuid, p_in_use_version integer)', 'admin', 'SELECT public.admin_save_peo_profile(0, ''{}'', NULL, NULL)', 'saving a PEO''s draft profile, based on the draft as the editor opened it'),
   ('admin_publish_peo_profile(p_peo_id bigint, p_draft_revision uuid)', 'admin', 'SELECT public.admin_publish_peo_profile(0, NULL)', 'publishing the draft the admin reviewed'),
   ('admin_set_peo_listed(p_peo_id bigint, p_listed boolean)', 'admin', 'SELECT public.admin_set_peo_listed(0, true)', 'listing a PEO, or not'),
@@ -1741,7 +1743,7 @@ INSERT INTO callable VALUES
    'a current member of the firm the call acts for saves an opportunity''s own fields from a version, by the level rule on the opportunity''s own owner (an agent their own, a lead their team''s, an owner the firm''s, one with no owner an owner''s), never its stage or account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an opportunity that is not there or whose account the caller may not see, 55000 on an archived account');
 -- CRM-A2.3 (20261120130000_opportunity_create.sql; supabase/tests/opportunity_create.sql): New opportunity on an account.
 INSERT INTO callable VALUES
-  ('opportunity_create(p_account_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_referral_partner_code text, p_next_step text, p_owner_id uuid, p_firm_id uuid, p_renewal_id uuid)', 'own', NULL,
+  ('opportunity_create(p_account_id uuid, p_name text, p_target_start date, p_employees integer, p_main_contact_id uuid, p_expected_close date, p_value numeric, p_source text, p_referral_partner_code text, p_next_step text, p_owner_id uuid, p_firm_id uuid, p_renewal_id uuid, p_line text)', 'own', NULL,
    'a current member of the firm the call acts for, who may see the account, makes an opportunity on it (stage Qualifying, no intake), owned by its maker or, by the level rule, by someone they may choose who can see the account; 42501 for anyone who is no member of that firm, PT423 for a closing firm and a support session, PT404 for an account the caller may not see, the same as for one that is not there, 55000 for an archived account, 22023 for a field, a source, a referral partner, a contact or an owner the rules refuse; with a renewal to start (CRM-A2.4b, D-449): 22023 for a renewal that is not this account''s (or not there) or a source other than Renewal, 42501 for a renewal the caller may not change (the renewal change rule), and PT409 for one that is done (marked as not renewed, or renewed by a win) or that an open opportunity already works'),
   ('opportunity_create_context(p_firm_id uuid, p_account_id uuid)', 'own', NULL,
    'the account''s name, archived state and employees, its contacts, the firm''s referral partners and the people who may own a new opportunity of it, to a member of the firm who may see the account; 42501 for anyone else, PT404 for an account the caller may not see');
@@ -4844,6 +4846,11 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('accounts_list', 'firm_scoped', 'one page of the accounts table: the firm named (a current member of it at this address), the accounts they may see by level, never another firm''s (4e; supabase/tests/accounts_query.sql)'),
   ('accounts_view_counts', 'firm_scoped', 'the count of each view of the accounts table: the same firm and the same accounts as the list (4e; supabase/tests/accounts_query.sql)'),
   ('firm_member_choices', 'firm_scoped', 'the firm''s current members by id and name, to a member of that firm at this address (4e; supabase/tests/accounts_query.sql)');
+
+-- Lines (ADR 0029; 20261126090000_lines.sql; supabase/tests/lines.sql). The new trigger functions and the two helpers that say what a line's quote holds are
+-- neither definer functions nor executable by an API role, so the gate does not ask for them.
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('quote_lines', 'public', 'a constant: the lines an opportunity, an intake and a market can be of; their check constraints call it as whoever writes the row, a prospect starting an intake included');
 
 -- Everything wrong between the registry and the catalogue, one per line, or NULL. It reads which functions exist and who may
 -- execute them, never what a function says.

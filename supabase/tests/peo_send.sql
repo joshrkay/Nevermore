@@ -214,6 +214,10 @@
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
 \i supabase/migrations/20261125120000_question_requests.sql
+\i supabase/migrations/20261125130000_broker_save_whole_form.sql
+\i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
+\i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
+\i supabase/migrations/20261126090000_lines.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
