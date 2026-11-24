@@ -1217,3 +1217,9 @@ Each rule broken in `20261204090000_reports.sql`, its test run, the migration pu
 2. `data_isolation.sql` passed with the function listed, classed and probed.
 3. `MenuSearch.test.tsx`, two new cases. Red: `Unable to find role="region" and name "Leads"`: the test's stand-in for the main search answered for another word, so nothing was shown. The stand-in answers for the word typed; green.
 4. Mutation run, all three red: an agent finds everyone's leads; another firm's leads are found; a binned lead is found.
+
+## Labels on the leads table (BR-5.4, issue 245): lead_labels_column.sql, 20261206090000_lead_labels_column.sql
+
+1. `supabase/tests/lead_labels_column.sql`, 4 cases, with the migration. Cases 1 to 3 (the column, the filter, the sort) green on first run. Case 4 red: `invalid input syntax for type json`, the test's own: `leads_view_counts` answers rows, not JSON. The test reads its rows; green.
+2. `leadsApi.test.ts`: the row-shape test read the type's columns from the migration that made it, so it now adds each column a later migration gives the type. `LeadsPage` fixtures given `labels`. `leadsTable.test.tsx` (3 cases) written with the column; green.
+3. Mutation run, all three red: a lead shows every label on the firm's leads; the Label filter matches nothing; sorting by label does nothing.

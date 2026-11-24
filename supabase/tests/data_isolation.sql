@@ -280,6 +280,7 @@
 \i supabase/migrations/20261203090000_templates_and_reply.sql
 \i supabase/migrations/20261204090000_reports.sql
 \i supabase/migrations/20261205090000_search_leads.sql
+\i supabase/migrations/20261206090000_lead_labels_column.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of

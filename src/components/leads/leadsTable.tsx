@@ -13,12 +13,14 @@ import type { ViewCount } from "@/lib/tableQuery";
 import type { ExportValue } from "@/lib/exportApi";
 import type { ShownColumn } from "@/lib/exportFile";
 import { dayInZone } from "@/components/accounts/accountsTable";
+import { Pill } from "@/components/accounts/accountLists";
+import { firmLabels } from "@/lib/bulkChangeApi";
 
 // The leads table (story CRM-L1.1a, slice 8.3, screen 14) as a workspace table: its columns, views, filters and the two calls to the database. The frame
 // (src/components/workspace/table/) does the rest, as it does for the accounts table (src/components/accounts/accountsTable.tsx).
 //
 // Selecting rows, bulk changes, the bin and export are slice 8.4's (D-811, src/pages/leads/LeadsPage.tsx), and so is the Convert row action (#190: the page draws it,
-// leads_can_convert decides it). Not here, and where it goes: the Label column and filter (D-1648), and custom fields (Epic 9). The name links to the lead's page (slice 8.5).
+// leads_can_convert decides it). The Label column and filter are here as the accounts table has them (D-2345). Not here: custom fields (Epic 9). The name links to the lead's page (slice 8.5).
 
 type Fields = typeof LEAD_FIELDS;
 
@@ -38,6 +40,7 @@ const FIELD_LABELS: Record<LeadField, string> = {
   status: "Status",
   not_fit_reason: "Not a fit because",
   owner: "Owner",
+  labels: "Label",
 };
 
 const FIELD_CHOICES: Partial<Record<LeadField, readonly FieldChoice[]>> = {
@@ -47,12 +50,13 @@ const FIELD_CHOICES: Partial<Record<LeadField, readonly FieldChoice[]>> = {
   state: US_STATE_CODES.map((value) => ({ value, label: value })),
 };
 
-const fieldsWith = (owners: readonly FieldChoice[] | undefined) =>
+const fieldsWith = (owners: readonly FieldChoice[] | undefined, labels?: readonly FieldChoice[]) =>
   Object.fromEntries(
     (Object.keys(LEAD_FIELDS) as LeadField[]).map((id) => [id, {
       label: FIELD_LABELS[id],
       kind: LEAD_FIELDS[id],
-      ...(id === "owner" && owners ? { choices: owners } : FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id], choicesEnforced: true } : {}),
+      // The firm's own labels are the Label filter's choices, never an enforced list: a word the firm no longer has still matches (nothing), as the database takes it.
+      ...(id === "owner" && owners ? { choices: owners } : id === "labels" && labels ? { choices: labels } : FIELD_CHOICES[id] ? { choices: FIELD_CHOICES[id], choicesEnforced: true } : {}),
     }]),
   ) as FieldDefinitions<Fields>;
 
@@ -141,6 +145,11 @@ const leadColumns: ColumnDefinition<LeadRow, keyof Fields>[] = [
     text: (row) => row.current_provider ?? "",
     cell: (row) => <span className="text-sm">{row.current_provider ?? dash}</span>,
   },
+  {
+    id: "labels", header: "Label", sortField: "labels", filterField: "labels",
+    text: (row) => row.labels.join(", "),
+    cell: (row) => (row.labels.length > 0 ? <span className="flex flex-wrap gap-1">{row.labels.map((l) => <Pill key={l}>{l}</Pill>)}</span> : <span className="text-sm">{dash}</span>),
+  },
 ];
 
 /** The story's default columns. The others are under Columns. */
@@ -191,14 +200,23 @@ export const useLeadsTable = (): LeadsTable => {
     retry: false,
     staleTime: 60_000,
   });
+  // The firm's own labels, for the Label filter. If they can't be listed the filter still works: a word can be typed.
+  const labels = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["table", firmId, LEADS_TABLE.id, "context", "labels"],
+    queryFn: () => firmLabels(firmId as string),
+    enabled: ready && !!firmId,
+    retry: false,
+    staleTime: 60_000,
+  });
   const { saved, status } = useSavedViewList(LEADS_TABLE.id);
   return useMemo(() => {
     const people = members.data;
-    const base: LeadsTableDefinition = people ? { ...LEADS_TABLE, fields: fieldsWith(people) } : LEADS_TABLE;
+    const words = labels.data?.map((l) => ({ value: l.name, label: l.name }));
+    const base: LeadsTableDefinition = people || words ? { ...LEADS_TABLE, fields: fieldsWith(people, words) } : LEADS_TABLE;
     const byId = new Map((people ?? []).map((p) => [p.value, p.label]));
     const settled = !members.isPending;
     return { table: withSavedViews(base, saved, status), names: (id: string) => byId.get(id) ?? (settled ? "A member" : undefined) };
-  }, [members.data, members.isPending, saved, status]);
+  }, [members.data, members.isPending, labels.data, saved, status]);
 };
 
 /** The page's one call for rows: the effective query (the view's filters and the address's together), for the firm. */

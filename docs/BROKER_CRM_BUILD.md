@@ -1768,7 +1768,7 @@ The rest of slice A is not code and is not done by this: published profiles for 
 
 ## Leads catch up
 
-`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which two of four are built (the duplicate warning, and leads in the menu's search). Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
+`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which three of four are built (the duplicate warning, leads in the menu's search, and the Label column and filter). Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
 
 | # | Decision |
 |---|---|
@@ -1777,7 +1777,10 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2342 | **Advice only.** The save is as it was; a check that fails shows nothing; nothing is asked until there is an email address, or a name with a business. |
 | D-2343 | **Leads are found from the menu's search by a read of their own** (`search_leads`, `20261205090000_search_leads.sql`, `supabase/tests/search_leads.sql`, 3 cases), asked beside `search_records`, which shares one budget across its four kinds and stays as it is. A lead is found when its name, business, email or phone holds every word; five at most, the latest changed first; by the level rule. One in the bin or already converted is not found (the account and contact it became are). |
 | D-2344 | **A failed lead search is never shown**: the box has no Leads group and the other kinds are as they were. "Nothing matches" waits for the leads, so it is never said and taken back. There is no "See all" for leads: the leads table takes no search from the address. |
-| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649); the label column and filter on the leads table (issue 245). Each is its own piece of work. |
+| D-2345 | **The leads table has a Label column and filter, as the accounts table has** (issue 245; `20261206090000_lead_labels_column.sql`, `supabase/tests/lead_labels_column.sql`, 4 cases). A row holds the lead's labels in order (`leads_row` gains `labels`). The filter is any of, none of, or is empty, by the word whatever its case; a word the firm no longer has matches nothing and is not refused. Sorting is by the labels read as one text, the unlabelled last. The column is under Columns, not among the story's default ones. |
+| D-2346 | **Everything that goes through the table's filters takes the Label filter with no change of its own**: saved views, view counts, a bulk change of "everything that matches", and an export's filters. |
+| D-2347 | **The Label column is not in the export**, as on the accounts table: the export registry has no column for it. The filter still narrows what is exported. |
+| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649). Its own piece of work. |
 
 ## Templates and replies
 
