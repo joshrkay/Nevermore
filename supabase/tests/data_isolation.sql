@@ -272,6 +272,7 @@
 \i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 \i supabase/migrations/20261126090000_lines.sql
 \i supabase/migrations/20261127090000_sendable.sql
+\i supabase/migrations/20261128090000_home.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1788,6 +1789,10 @@ INSERT INTO callable VALUES
   ('firm_licence_record(p_firm_id uuid)', 'own', NULL, 'a current member of the firm the call acts for reads that firm''s producer number and licences; 42501 for anyone else'),
   ('admin_firm_licence_record(p_firm_id uuid)', 'admin', 'SELECT public.admin_firm_licence_record(%2$L)', 'a platform admin reads a firm''s producer number and licences before approving it (Q-1.1)'),
   ('admin_record_licence_check(p_firm_id uuid)', 'admin', 'SELECT public.admin_record_licence_check(%2$L)', 'a platform admin records that they checked a firm''s licences; never a firm they belong to');
+-- Home (CRM-H1, 20261128090000): one read of what needs a member, the counts and the panels; it asks the firm itself and is probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('home_page(p_firm_id uuid, p_whose text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm the call acts for (or a support session at its address) reads Home: what needs them, the counts and the panels, each by the level rule and, for their own, by what they own; 42501 for anyone who is no member of that firm');
 -- CRM-O1.3b review (20261121170000_opportunity_outcome.sql; supabase/tests/opportunity_outcome.sql): the outcome of an opportunity, in one read.
 INSERT INTO callable VALUES
   ('opportunity_outcome(p_firm_id uuid, p_opportunity_id uuid)', 'own', NULL,
@@ -2730,6 +2735,10 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('remove_firm_market_contact', 'advisor', 'by_id', $$SELECT 'removed' || public.remove_firm_market_contact({firm}, {fmc})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
+
+-- ---- Home (CRM-H1, 20261128090000): every member of the firm reads its Home, each by what they may see.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('home_page', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.home_page({firm}, 'everyone') -> 'needs')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$');
 
 -- ---- CRM-L1.1b: the leads' bulk changes, the bin and Restore. {lead} is each firm's lead owned by its agent (the positive control of the bulk changes); the
 -- bin and Restore are an owner's. A bulk change sets the lead's city to a new word each time, so each call changes it (and the undo has something to put back).
@@ -4878,6 +4887,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_licence_change', 'service_only', 'the shared start of every change to a firm''s licence record: holds the caller to a current owner of a writable firm; no API role can call it'),
   ('firm_licence_record_of', 'service_only', 'a firm''s licence record for the two reads above, which decide who may ask; no API role can call it'),
   ('guard_firm_licensed_for_line', 'trigger', 'refuses the message of a send to a carrier (direction sent, a workers'' comp intake) for a firm with no property and casualty licence on record that has not expired (BR-2.2, ADR 0029)');
+-- Home (20261128090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('home_page', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s Home, each line and count by the level rule; refused for anyone else');
 -- One firm at a time (CRM-S1.1b).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('address_admits_firm', 'service_only', 'whether the firm address a request was made at admits a firm: firm_role() asks it; not callable through the API');
@@ -5126,6 +5138,7 @@ INSERT INTO secret_readers VALUES
   -- M-2.3: the update reads only what send_to_peo reads, and the two certified versions' answers to name what changed by label, never a value.
   ('send_peo_update(p_session_id uuid, p_peo text, p_to text[], p_subject text, p_note text)',
    $$SELECT public.send_peo_update((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO', ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
+  ('home_page(p_firm_id uuid, p_whose text, p_time_zone text)', $$SELECT public.home_page({firm_a}, 'everyone')::text$$),
   ('peo_send_context(p_session_id uuid, p_peo text)',
    $$SELECT public.peo_send_context((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'Probe PEO')::text$$),
   ('attach_peo_link(p_message_id bigint, p_link_id bigint, p_token text)',
