@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-11-24 |
-| **Status** | Draft for the founder to challenge. Built so far, from slice A: BR-1.3, BR-1.4 and BR-2.2 (`docs/BROKER_CRM_BUILD.md`, "Sendable", for what was decided and what was left out). Nothing else here is built or decided |
+| **Status** | Draft for the founder to challenge. Built so far: from slice A, BR-1.3, BR-1.4 and BR-2.2; from slice C, BR-3.1 (Home), BR-3.2 (upcoming tasks), BR-3.3 (daily summary), BR-3.6 (request emails) and BR-5.2 (a new firm's Home). `docs/BROKER_CRM_BUILD.md` ("Sendable", "Home", "Daily summary and request emails") says what was decided and what was left out. Nothing else here is built |
 | **What it covers** | What stands between the broker's workspace as built and a PEO or workers' comp brokerage working in it every day: the markets, the launch gates, the daily workflow, what the employer is handed, moving a firm in, and the depth of each line |
 | **Builds on** | `docs/BROKER_CRM_PRD.md` (the workspace), `docs/QUOTING_PLATFORM_STORIES.md` (Epics K to R), `docs/BROKER_CRM_STORIES.md`, `docs/adr/0029` (lines) |
 | **Stories** | Not written yet. Each requirement below carries an ID (BR-…) and, where one exists, the story it finishes |
@@ -153,7 +153,7 @@ sendable by that firm.
 
 **BR-1.4 Asking for a market that isn't listed.**
 From Choose PEOs, an agent asks for a PEO or carrier to be listed: its name, a contact, and its forms if they
-have them. A platform admin is told by email on each request (decided 2026-11-24; not built yet: today they see a count on the PEOs page). The agent sees the request and its answer. Until it is listed, the agent
+have them. A platform admin is told by email on each request (decided 2026-11-24, and built), and sees a count on the PEOs page. The agent sees the request and its answer. Until it is listed, the agent
 can record a quote from it as **Sent by hand**.
 
 **BR-1.5 Keeping many profiles.**
@@ -219,7 +219,7 @@ a FEIN.
 
 **BR-3.6 Emails about a request for a PEO or carrier.**
 Decided 2026-11-24: platform admins are emailed when a firm makes a request (BR-1.4), and the person who asked is
-emailed the answer. Neither is built yet.
+emailed the answer. Both are built.
 
 **BR-3.4 Replying on a thread.**
 An agent writes a free reply on a PEO's or carrier's thread from their connected mailbox, with no new bundle
@@ -383,7 +383,7 @@ and an answer on protected health information. Do none of it until two lines are
 |---|---|---|
 | A. Sendable | A firm approved today sends today, under approved wording, with its licence on record | BR-1.1 to 1.4, BR-2.1, 2.2, 2.4. **Built:** BR-1.3, BR-1.4, BR-2.2. **Open, and not code:** BR-1.1, BR-1.2 (profiles), BR-2.1 (counsel), BR-2.4 (production) |
 | B. Checked | Five brokers and two competitors' demos are written up; this document is revised | A, BR-2.6 |
-| C. The day | Home, my tasks, reminders, the first-run checklist | B |
+| C. The day | Home, upcoming tasks, the daily summary, a new firm's Home | B. **Built** (2026-11-24), ahead of B at the founder's choice |
 | D. The win | The complete comparison, the employer's copy, the firm's logo | B, BR-2.3 |
 | E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C |
 | F. The owner | Five reports | C, E |

@@ -1141,3 +1141,11 @@ As "Sendable" above: tests written before the code they describe, each layer's f
 ### Verify harness (daily summary and request emails)
 
 Real Postgres with every migration, real PostgREST, the real `dispatch-outbox` under Deno, a stand-in provider. A certification still queues its two emails (the confirmation sent; the alert waiting with no member to tell, as before). Then: a request for "Summit PEO" by a member of the default firm, sent to the one platform admin with the link to `/advisor/peos`; a daily summary queued for 7:05 on a Tuesday in New York for that member, sent to them alone with the one line (`Lead quiet: Quiet Lead, Lead <b>Co</b> (Nov 15)`, escaped in the HTML), the link to their firm's `/home` and `/settings`; the request answered, and the answer sent to the member with the admin's words. All three ended `sent` with no error.
+
+### Mutation and gate (Home, daily summary and request emails)
+
+23 breaks of the two migrations, one at a time, each against its own SQL test; all 23 red on the first run. Home (12): each of the three day counts changed; an expired quote counted as expiring; a certified intake listed after it was sent; a done task listed; a task shown to "Mine" whoever it is for; an agent given everyone's by asking; won and lost searches counted as open; a renewal marked as not renewed listed; a waiting firm told nothing stops it; another firm's Home answered without a membership. Daily summary (11): sent at weekends; sent at any hour; the hour taken in UTC and not the member's zone; sent to a member who turned it off; to one who has left; to a suspended firm's; sent with nothing in it; holding everyone's work and not the member's own; more than twenty lines; a chosen zone overwritten by the browser's; an answer mailed when the asker's account is gone.
+
+Not mutated: the screens (their cases were written before or with the code and each names its break), `dispatch-outbox` (12 new cases; the three kinds were also driven through the real function in the verify harness).
+
+Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 372 files, 7451 tests passed; build green; `supabase/tests/run.sh`: All 136 SQL tests passed; `npm run test:e2e`: 36 passed.
