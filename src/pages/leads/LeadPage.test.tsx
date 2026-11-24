@@ -16,6 +16,8 @@ const signOut = vi.fn();
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1", email: "dana@example.com" }, signOut }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+const resolveMergedLead = vi.fn();
+vi.mock("@/lib/mergeApi", async () => ({ ...(await vi.importActual<object>("@/lib/mergeApi")), resolveMergedLead: (...a: unknown[]) => resolveMergedLead(...a) }));
 const client = { getLeadPage: vi.fn(), listLeadActivity: vi.fn(), updateLead: vi.fn(), markLeadNotFit: vi.fn(), reopenLead: vi.fn() };
 vi.mock("@/lib/leadPageApi", async () => ({ ...(await vi.importActual<object>("@/lib/leadPageApi")), ...client }));
 const convert = { getConvertMatches: vi.fn(), convertLead: vi.fn() };
@@ -79,7 +81,9 @@ const renderPage = (path = "/leads/l1", ws: Workspace = workspace()) => {
 };
 
 beforeEach(() => {
-  for (const fn of [...Object.values(client), ...Object.values(convert), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut]) fn.mockReset();
+  for (const fn of [...Object.values(client), ...Object.values(convert), ...Object.values(activity), ...Object.values(conversations), listFirmMembers, listAccountOwners, fetchMyMailbox, signOut, resolveMergedLead]) fn.mockReset();
+  // An address that was never merged away leads nowhere: the default for every case but the one that follows one.
+  resolveMergedLead.mockResolvedValue(null);
   vi.mocked(toast.success).mockReset();
   vi.mocked(toast.error).mockReset();
   client.getLeadPage.mockResolvedValue(page());
@@ -330,6 +334,17 @@ describe("LeadPage: the states", () => {
     renderPage();
     expect(await screen.findByText(/This lead isn't available/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to all leads" })).toHaveAttribute("href", "/leads");
+  });
+
+  // Catches: the old address of a lead merged into another going nowhere, or the kept lead's page not saying how the person got there (CRM-S4.3, D-644).
+  it("follows a merged lead's old address to the lead it became, and says so there", async () => {
+    client.getLeadPage.mockImplementation(async (_firm: string, id: string) => (id === "l9" ? null : page()));
+    serveActivity([]);
+    resolveMergedLead.mockResolvedValue({ id: "l1", name: "Lucia Reyes" });
+    renderPage("/leads/l9");
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/leads/l1"));
+    expect(resolveMergedLead).toHaveBeenCalledWith("f1", "l9");
+    expect(await screen.findByRole("status")).toHaveTextContent("merged into Lucia Reyes");
   });
 
   // Catches: a load that failed said as a lead that isn't there, with no way to try again.

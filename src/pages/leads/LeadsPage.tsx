@@ -6,6 +6,7 @@ import { leadsTableWords } from "@/data/leads";
 import { countLeadsViews, fetchLeadsPage, leadExportColumnsFor, useLeadsTable } from "@/components/leads/leadsTable";
 import { ConvertLeadDialog } from "@/components/leads/ConvertLeadDialog";
 import { NewLeadDialog } from "@/components/leads/NewLeadDialog";
+import { MergeDialog } from "@/components/accounts/MergeDialog";
 import { LEAD_BULK_KINDS, LEAD_BULK_TITLES, type LeadBulkKind } from "@/components/leads/leadBulkWords";
 import { LeadBulkDialog, type LeadBulkMade } from "@/components/leads/LeadBulkDialog";
 import { LeadBulkResultBar } from "@/components/leads/LeadBulkResultBar";
@@ -86,6 +87,7 @@ const LeadsPage = () => {
   // The bin (D-806): the Deleted view is the firm's owners' (the database refuses anyone else).
   const canSeeBin = !!firmId && !!workspace?.isOwner;
   const [binOpen, setBinOpen] = useState(false);
+  const [merging, setMerging] = useState<{ kept: string; removed: string } | null>(null);
   const ask = (kind: LeadBulkKind) => setAsking({
     kind,
     count: selection.count,
@@ -117,6 +119,10 @@ const LeadsPage = () => {
             {LEAD_BULK_TITLES[kind]}
           </button>
         ))}
+        {/* Merging two leads (CRM-S4.3, BR-5.4): offered when exactly two are chosen by hand. The dialog says, in the database's words, when the person may not. */}
+        {canBulk && !selection.all && selection.count === 2 && (
+          <button type="button" onClick={() => setMerging({ kept: selection.ids[0], removed: selection.ids[1] })} className="min-h-11 rounded-md border border-border bg-background px-4 text-sm hover:bg-muted">Merge</button>
+        )}
         {firmId && <ExportControl firmId={firmId} table="leads" columns={leadExportColumnsFor(columns, timeZone)} filters={selectedFilters} {...(selection.all ? {} : { ids: selection.ids })} />}
       </SelectionBar>
       {selection.count === 0 && (<>
@@ -177,6 +183,21 @@ const LeadsPage = () => {
   return (
     <div className="bg-background">
       <main className="container mx-auto px-6 py-8">
+        {merging && firmId && (
+          <MergeDialog
+            firmId={firmId}
+            kind="lead"
+            keptId={merging.kept}
+            removedId={merging.removed}
+            onClose={() => setMerging(null)}
+            onMerged={() => {
+              setMerging(null);
+              selection.clear();
+              refresh();
+              void queryClient.invalidateQueries({ queryKey: ["menu-counts"] });
+            }}
+          />
+        )}
         {made && firmId && (
           <LeadBulkResultBar
             key={made.seq}

@@ -41,3 +41,14 @@ describe("merge words and fields", () => {
     expect(mergedFromWords("Harborview Marine LLC")).toBe("From Harborview Marine LLC, merged");
   });
 });
+
+describe("the fields two leads are chosen between", () => {
+  it("are the database's own list, in its order", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { LEAD_MERGE_FIELDS, MERGE_FIELD_LABELS } = await import("./merge");
+    const sql = readFileSync("supabase/migrations/20261207090000_merge_leads.sql", "utf8");
+    const block = sql.slice(sql.indexOf("-- sync:begin merge_lead_fields"), sql.indexOf("-- sync:end merge_lead_fields"));
+    expect([...block.matchAll(/'(\w+)'/g)].map((m) => m[1])).toEqual([...LEAD_MERGE_FIELDS]);
+    for (const f of LEAD_MERGE_FIELDS) expect(MERGE_FIELD_LABELS[f]).toBeTruthy();
+  });
+});

@@ -13,10 +13,20 @@ export type AccountMergeField = (typeof ACCOUNT_MERGE_FIELDS)[number];
 export const CONTACT_MERGE_FIELDS = ["first_name", "last_name", "title", "email", "phone", "mobile", "do_not_email", "owner"] as const;
 export type ContactMergeField = (typeof CONTACT_MERGE_FIELDS)[number];
 
-export const MERGE_FIELD_LABELS: Record<AccountMergeField | ContactMergeField, string> = {
+/** The fields of two leads a person picks between (CRM-S4.3, BR-5.4; the database's own list: `merge_lead_fields`). "status" carries why a lead is not a fit. */
+// sync:begin merge_lead_fields
+export const LEAD_MERGE_FIELDS = ["name", "title", "business", "email", "phone", "city", "state", "employees", "current_provider", "note", "status", "owner"] as const;
+// sync:end merge_lead_fields
+export type LeadMergeField = (typeof LEAD_MERGE_FIELDS)[number];
+
+/** What a merge dialog merges: an account, a contact, or a lead (which has its own preview and merge in the database, 20261207090000_merge_leads.sql). */
+export type MergeSubject = MergeKind | "lead";
+
+export const MERGE_FIELD_LABELS: Record<AccountMergeField | ContactMergeField | LeadMergeField, string> = {
   name: "Name", trade_name: "Trade name", website: "Website", phone: "Phone", street: "Street", city: "City", state: "State", postal_code: "Postal code",
   industry: "Industry", employees: "Employees", states_of_operation: "States of operation", current_provider: "Current provider", owner: "Owner",
   first_name: "First name", last_name: "Last name", title: "Title", email: "Email", mobile: "Mobile", do_not_email: "Do not email",
+  business: "Business", note: "Note", status: "Status",
 };
 
 /** Which record's value a field keeps. A field left out keeps the kept record's value, or the removed one's when the kept one is blank (D-640). */
@@ -27,8 +37,8 @@ export type MergeChoices<F extends string> = Partial<Record<F, MergeChoice>>;
 export const mergeChoiceWords = (choice: MergeChoice, keptName: string, removedName: string): string => (choice === "kept" ? `Keep ${keptName}` : `Use ${removedName}`);
 
 /** The merge sentence the confirm step says (D-203: there is no unmerge). */
-export function mergeWarning(kind: MergeKind, keptName: string, removedName: string): string {
-  const what = kind === "account" ? "account" : "contact";
+export function mergeWarning(kind: MergeSubject, keptName: string, removedName: string): string {
+  const what = kind;
   return `${removedName} will be deleted and everything on it moved to ${keptName}. A merged ${what} can't be split again.`;
 }
 

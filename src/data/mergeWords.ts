@@ -1,4 +1,5 @@
-import type { MergeChoice, MergeKind } from "@/data/merge";
+import { LEAD_NOT_FIT_REASON_LABELS, LEAD_STATUS_LABELS } from "@/data/leads";
+import type { MergeChoice, MergeSubject } from "@/data/merge";
 
 // What the merge screens say (story CRM-S4.3a; docs/BROKER_CRM_BUILD.md D-660 to D-669), beside the database side's words in merge.ts (CRM-S4.3b): how a value reads in
 // the side-by-side choice, where each choice starts, what would move and what happened. Words only: who may merge and what moves are the database's.
@@ -7,8 +8,8 @@ const count = (n: number, one: string, many: string) => `${n.toLocaleString("en-
 const CALLS = ["call, note or task", "calls, notes and tasks"] as const;
 
 /** A record's name as the dialog says it: an account's name, a contact's first and last name. */
-export const mergeRecordName = (kind: MergeKind, record: Record<string, unknown>): string =>
-  kind === "account"
+export const mergeRecordName = (kind: MergeSubject, record: Record<string, unknown>): string =>
+  kind !== "contact"
     ? String(record.name ?? "")
     : [record.first_name, record.last_name].filter((p): p is string => typeof p === "string" && p.trim() !== "").join(" ");
 
@@ -16,9 +17,17 @@ export const mergeRecordName = (kind: MergeKind, record: Record<string, unknown>
 export const isBlankValue = (value: unknown): boolean =>
   value === null || value === undefined || (typeof value === "string" && value.trim() === "") || (Array.isArray(value) && value.length === 0);
 
-/** A field's value as the choice shows it: blank is said, a list is joined, a yes or no is a word, an owner is a name. */
-export function mergeValueWords(field: string, value: unknown): string {
+/**
+ * A field's value as the choice shows it: blank is said, a list is joined, a yes or no is a word, an owner is a name. A lead's status is said in the leads
+ * table's words, with why it is not a fit when the record (given for that) holds a reason.
+ */
+export function mergeValueWords(field: string, value: unknown, record?: Record<string, unknown>): string {
   if (field === "do_not_email") return value ? "Yes" : "No";
+  if (field === "status" && typeof value === "string" && value in LEAD_STATUS_LABELS) {
+    const reason = record?.not_fit_reason;
+    const why = typeof reason === "string" && reason in LEAD_NOT_FIT_REASON_LABELS ? LEAD_NOT_FIT_REASON_LABELS[reason as keyof typeof LEAD_NOT_FIT_REASON_LABELS] : null;
+    return [LEAD_STATUS_LABELS[value as keyof typeof LEAD_STATUS_LABELS], why].filter(Boolean).join(": ");
+  }
   if (field === "owner") return value && typeof value === "object" && "name" in value ? String((value as { name: unknown }).name) : "No owner";
   if (isBlankValue(value)) return "Blank";
   return Array.isArray(value) ? value.join(", ") : String(value);
@@ -34,7 +43,7 @@ export function defaultMergeChoice(field: string, kept: Record<string, unknown>,
 }
 
 /** What would move to the kept record, from the preview's counts (nothing is said of what has none). */
-export function mergeMovesWords(kind: MergeKind, moves: Record<string, number>, keptName: string): string[] {
+export function mergeMovesWords(kind: MergeSubject, moves: Record<string, number>, keptName: string): string[] {
   const n = (key: string) => moves[key] ?? 0;
   const lines: string[] = [];
   if (kind === "account") {
@@ -50,6 +59,15 @@ export function mergeMovesWords(kind: MergeKind, moves: Record<string, number>, 
       ? `Nothing is attached to the account that will be removed, so there is nothing to move to ${keptName}.`
       : `${parts.join(", ")} ${parts.length === 1 && parts[0].startsWith("1 ") ? "moves" : "move"} to ${keptName}.`);
     if (n("intakes") > 0) lines.push(`${count(n("intakes"), "intake stays", "intakes stay")} on ${n("intakes") === 1 ? "its own" : "their own"} opportunity.`);
+  } else if (kind === "lead") {
+    const parts = [
+      n("activities") > 0 && count(n("activities"), ...CALLS),
+      n("emails") > 0 && count(n("emails"), "email", "emails"),
+      n("labels") > 0 && count(n("labels"), "label", "labels"),
+    ].filter((p): p is string => !!p);
+    lines.push(parts.length === 0
+      ? `Nothing is attached to the lead that will be removed, so there is nothing to move to ${keptName}.`
+      : `${parts.join(", ")} ${parts.length === 1 && parts[0].startsWith("1 ") ? "moves" : "move"} to ${keptName}.`);
   } else {
     lines.push(n("activities") > 0
       ? `${count(n("activities"), ...CALLS)} ${n("activities") === 1 ? "moves" : "move"} to ${keptName}.`
@@ -62,7 +80,7 @@ export function mergeMovesWords(kind: MergeKind, moves: Record<string, number>, 
 }
 
 /** What a merge did, for the line that confirms it. */
-export function mergedWords(kind: MergeKind, keptName: string, removedName: string, moved: { contacts?: number; opportunities?: number; activities?: number }): string {
+export function mergedWords(kind: MergeSubject, keptName: string, removedName: string, moved: { contacts?: number; opportunities?: number; activities?: number }): string {
   const base = `${removedName} was merged into ${keptName}.`;
   const along = [
     kind === "account" && (moved.contacts ?? 0) > 0 && count(moved.contacts ?? 0, "contact", "contacts"),
