@@ -385,7 +385,7 @@ and an answer on protected health information. Do none of it until two lines are
 | B. Checked | Five brokers and two competitors' demos are written up; this document is revised | A, BR-2.6 |
 | C. The day | Home, upcoming tasks, the daily summary, a new firm's Home | B. **Built** (2026-11-24), ahead of B at the founder's choice |
 | D. The win | The complete comparison, the employer's copy, the firm's logo | B, BR-2.3 |
-| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built:** import (BR-5.1); roles, teams and visibility (BR-5.3); the duplicate warning for a new lead (of BR-5.4); a firm's message templates (BR-3.5); a reply on a thread (BR-3.4). **Not built, of BR-5.4:** merging two leads, labels on the leads table, leads in the menu's search |
+| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built:** import (BR-5.1); roles, teams and visibility (BR-5.3); the duplicate warning for a new lead (of BR-5.4); a firm's message templates (BR-3.5); a reply on a thread (BR-3.4). leads in the menu's search (of BR-5.4). **Not built, of BR-5.4:** merging two leads, labels on the leads table |
 | F. The owner | Five reports | C, E. **Built** (BR-6.1): the pipeline, quotes by market, won and lost, renewals, commission, on `/reports` |
 | G. Workers' comp | Its own intake, loss runs and carrier quotes read, its renewal | B, BR-1.2 |
 

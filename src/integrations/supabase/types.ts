@@ -1375,6 +1375,8 @@ export type Database = {
       }
       // The duplicate warning for a new lead (20261202090000, BR-5.4).
       duplicate_lead_check: { Args: { p_firm_id: string; p_name: string; p_business: string | null; p_email: string | null; p_state: string | null }; Returns: Json }
+      // Leads in the menu's search (20261205090000, BR-5.4): the firm's leads that hold every word typed, five at most.
+      search_leads: { Args: { p_firm_id: string; p_query?: string | null }; Returns: Json }
       // Reports (20261204090000, BR-6.1): the five reports in one read, worked out when asked.
       firm_reports: { Args: { p_firm_id: string; p_from: string; p_to: string; p_whose?: string; p_line?: string | null; p_time_zone?: string }; Returns: Json }
       // Templates and replies (20261203090000, BR-3.5, BR-3.4): a firm's own opening text by kind, an owner's change to one, and a plain reply on a thread.

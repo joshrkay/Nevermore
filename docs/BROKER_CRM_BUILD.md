@@ -1768,14 +1768,16 @@ The rest of slice A is not code and is not done by this: published profiles for 
 
 ## Leads catch up
 
-`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which one of four is built. Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
+`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which two of four are built (the duplicate warning, and leads in the menu's search). Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
 
 | # | Decision |
 |---|---|
 | D-2340 | **A new lead is warned of as a new account is** (CRM-S4.2): while the person types, the firm's leads and accounts that may be the same are said. A lead matches by its email, or by its name and business together; a name alone is no match (two people share a name). An account matches as a new account's warning finds one, with the lead's business as its name: the same name and state, or a contact with that email. A lead in the bin is no match. |
 | D-2341 | **What the person may not see is only said to exist**, with whom to ask, exactly as for accounts (D-602): the mask is rebuilt in the browser from its two fields, so nothing else the answer held can reach the screen. Another firm's records are never said to exist. |
 | D-2342 | **Advice only.** The save is as it was; a check that fails shows nothing; nothing is asked until there is an email address, or a name with a business. |
-| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649); the label column and filter on the leads table (issue 245); leads in the menu's search (`search_records` shares one budget across accounts, contacts, opportunities and quotes, and is restated whole to add a kind). Each is its own piece of work. |
+| D-2343 | **Leads are found from the menu's search by a read of their own** (`search_leads`, `20261205090000_search_leads.sql`, `supabase/tests/search_leads.sql`, 3 cases), asked beside `search_records`, which shares one budget across its four kinds and stays as it is. A lead is found when its name, business, email or phone holds every word; five at most, the latest changed first; by the level rule. One in the bin or already converted is not found (the account and contact it became are). |
+| D-2344 | **A failed lead search is never shown**: the box has no Leads group and the other kinds are as they were. "Nothing matches" waits for the leads, so it is never said and taken back. There is no "See all" for leads: the leads table takes no search from the address. |
+| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649); the label column and filter on the leads table (issue 245). Each is its own piece of work. |
 
 ## Templates and replies
 

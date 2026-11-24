@@ -1210,3 +1210,10 @@ Each rule broken in `20261204090000_reports.sql`, its test run, the migration pu
 ### Slice E (templates, replies) and slice F: the gate
 
 `npm run lint` (0 errors), `typecheck:functions`, `typecheck:app`, `npm test` (380 files, 7,526 tests), `npm run build`, `supabase/tests/run.sh` (144 passed), `npx playwright test` (38 passed).
+
+## Leads in the menu's search (BR-5.4, part): search_leads.sql, 20261205090000_search_leads.sql
+
+1. `supabase/tests/search_leads.sql`, 3 cases, with the migration. Cases 1 and 2 green; case 3 red twice on the fixture, not the function: `leads_converted_has_when`, then `A lead is converted only into an account` (the guard). The fixture now converts its lead as the table's owner with the guard off.
+2. `data_isolation.sql` passed with the function listed, classed and probed.
+3. `MenuSearch.test.tsx`, two new cases. Red: `Unable to find role="region" and name "Leads"`: the test's stand-in for the main search answered for another word, so nothing was shown. The stand-in answers for the word typed; green.
+4. Mutation run, all three red: an agent finds everyone's leads; another firm's leads are found; a binned lead is found.

@@ -279,6 +279,7 @@
 \i supabase/migrations/20261202090000_lead_duplicates.sql
 \i supabase/migrations/20261203090000_templates_and_reply.sql
 \i supabase/migrations/20261204090000_reports.sql
+\i supabase/migrations/20261205090000_search_leads.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1819,6 +1820,9 @@ INSERT INTO callable VALUES
   ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
   ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
   ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
+-- Leads in the menu's search (BR-5.4, 20261205090000): asks the firm itself; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('search_leads(p_firm_id uuid, p_query text)', 'own', NULL, 'a current member of the firm the call acts for finds that firm''s leads they may see by the level rule; 42501 for anyone else');
 -- Reports (BR-6.1, 20261204090000): the five reports ask the firm itself; probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('firm_reports(p_firm_id uuid, p_from date, p_to date, p_whose text, p_line text, p_time_zone text)', 'own', NULL,
@@ -2793,6 +2797,10 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('remove_firm_market_contact', 'advisor', 'by_id', $$SELECT 'removed' || public.remove_firm_market_contact({firm}, {fmc})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
+
+-- ---- Leads in the menu's search (BR-5.4, 20261205090000): any member's read of their own firm.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('search_leads', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.search_leads({firm}, 'probe') -> 'rows')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$');
 
 -- ---- Reports (BR-6.1, 20261204090000): any member's read of their own firm.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -5004,6 +5012,9 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
   ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
   ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
+-- Leads in the menu's search (20261205090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('search_leads', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s leads, each by the level rule; refused for anyone else');
 -- Reports (20261204090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_reports', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s reports, each record counted by the level rule and commission for an owner only; refused for anyone else');
