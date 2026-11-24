@@ -919,6 +919,18 @@ _Avoid_: revert, rollback
 What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
+**Reports** (code: `firm_reports`, `ReportsPage`; BR-6.1, CRM-R1.1 to R1.3, D-2400 to D-2412):
+Five views of the firm beside the intake funnel: the **Pipeline** (what is open now, by stage and owner), **Quotes by market** (sent, quoted, declined and why, days to a quote, placed), **Won and lost**, **Renewals** (due by month, and how the period's ended) and, for an owner, **Commission** (expected against received). One set of controls applies to all: a period, whose work, a line. Each is worked out when asked from the records the person may see, and is never a stored copy; each lists the records its figures count.
+_Avoid_: dashboard (Home is the page of what needs a person), analytics, report builder (there is none)
+
+**Message template** (code: `firm_message_templates`, `MessageTemplates`; BR-3.5, P-3.2, D-2350 to D-2354):
+What a firm's messages to a PEO or carrier open with, one for each kind: a first send, a **Follow-up**, a withdrawal. An owner keeps them in Settings; a kind with none opens with the product's own text. It may name the employer, the File ID, the version, the day sent and the PEO or carrier, each filled in when the message is opened. Whoever sends still edits the words, and what the product adds under a message (the link and what it opens) is never part of one.
+_Avoid_: canned response, snippet, signature
+
+**Reply** (on a PEO's or carrier's thread; code: `reply_to_peo`, `FollowUpOrWithdraw`; BR-3.4, M-3.5, D-2355 to D-2358):
+An advisor's own words on the thread of a quote request the product sent, from their connected mailbox, with no bundle link. It changes nothing else: no status, no link. A **Follow-up** carries a fresh link and a withdrawal closes the quote request; a reply does neither.
+_Avoid_: response (a PEO's response is a quote or a decline), message (any email on the thread)
+
 **Import** (code: `imports`, `import_rows`, `ImportPage`; story CRM-X4.1, BR-5.1, D-2300 to D-2319):
 Bringing leads, or accounts with their contacts, into a firm from a CSV file, by an owner or a lead. The person matches each column of the file to a field, reads a **Review**, and imports. Each row makes one record, by the rules a record made by hand is held to; a row whose record is already here makes nothing, and neither does one that breaks a rule, and each says why. An import is one batch: it is listed with who ran it and when, and can be undone as a whole for 30 days. It contacts nobody, and the file is read in the browser and never kept.
 _Avoid_: upload (a document is uploaded), sync, migration

@@ -1375,6 +1375,12 @@ export type Database = {
       }
       // The duplicate warning for a new lead (20261202090000, BR-5.4).
       duplicate_lead_check: { Args: { p_firm_id: string; p_name: string; p_business: string | null; p_email: string | null; p_state: string | null }; Returns: Json }
+      // Reports (20261204090000, BR-6.1): the five reports in one read, worked out when asked.
+      firm_reports: { Args: { p_firm_id: string; p_from: string; p_to: string; p_whose?: string; p_line?: string | null; p_time_zone?: string }; Returns: Json }
+      // Templates and replies (20261203090000, BR-3.5, BR-3.4): a firm's own opening text by kind, an owner's change to one, and a plain reply on a thread.
+      firm_message_templates: { Args: { p_firm_id: string | null }; Returns: Json }
+      set_firm_message_template: { Args: { p_firm_id: string; p_kind: string; p_body: string }; Returns: undefined }
+      reply_to_peo: { Args: { p_quote_request_id: number; p_to: string[]; p_subject: string; p_note: string }; Returns: Json }
       // Roles, teams and visibility (20261201090000, CRM-X1.1): an owner changes a member, keeps teams, and sets who sees what.
       change_member: { Args: { p_firm_id: string; p_user_id: string; p_role: string; p_team_id: string | null }; Returns: undefined }
       save_team: { Args: { p_firm_id: string; p_team_id: string | null; p_name: string; p_parent_team_id: string | null }; Returns: string }

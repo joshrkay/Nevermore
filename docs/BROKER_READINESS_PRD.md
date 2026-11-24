@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-11-24 |
-| **Status** | Draft for the founder to challenge. Built so far: from slice A, BR-1.3, BR-1.4 and BR-2.2; from slice C, BR-3.1 (Home), BR-3.2 (upcoming tasks), BR-3.3 (daily summary), BR-3.6 (request emails) and BR-5.2 (a new firm's Home). `docs/BROKER_CRM_BUILD.md` ("Sendable", "Home", "Daily summary and request emails") says what was decided and what was left out. Nothing else here is built |
+| **Status** | Draft for the founder to challenge. Built so far: from slice A, BR-1.3, BR-1.4 and BR-2.2; from slice C, BR-3.1 (Home), BR-3.2 (upcoming tasks), BR-3.3 (daily summary), BR-3.6 (request emails) and BR-5.2 (a new firm's Home). From slice F: BR-6.1 (the five reports). From slice E: BR-5.1 (import), BR-5.3 (roles, teams, visibility), BR-3.5 (templates), BR-3.4 (a reply) and the duplicate warning of BR-5.4. `docs/BROKER_CRM_BUILD.md` ("Sendable", "Home", "Daily summary and request emails", "Import", "Roles, teams and visibility", "Leads catch up", "Templates and replies", "Reports") says what was decided and what was left out. Nothing else here is built |
 | **What it covers** | What stands between the broker's workspace as built and a PEO or workers' comp brokerage working in it every day: the markets, the launch gates, the daily workflow, what the employer is handed, moving a firm in, and the depth of each line |
 | **Builds on** | `docs/BROKER_CRM_PRD.md` (the workspace), `docs/QUOTING_PLATFORM_STORIES.md` (Epics K to R), `docs/BROKER_CRM_STORIES.md`, `docs/adr/0029` (lines) |
 | **Stories** | Not written yet. Each requirement below carries an ID (BR-…) and, where one exists, the story it finishes |
@@ -385,8 +385,8 @@ and an answer on protected health information. Do none of it until two lines are
 | B. Checked | Five brokers and two competitors' demos are written up; this document is revised | A, BR-2.6 |
 | C. The day | Home, upcoming tasks, the daily summary, a new firm's Home | B. **Built** (2026-11-24), ahead of B at the founder's choice |
 | D. The win | The complete comparison, the employer's copy, the firm's logo | B, BR-2.3 |
-| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built so far:** import (BR-5.1); roles, teams and visibility (BR-5.3) |
-| F. The owner | Five reports | C, E |
+| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built:** import (BR-5.1); roles, teams and visibility (BR-5.3); the duplicate warning for a new lead (of BR-5.4); a firm's message templates (BR-3.5); a reply on a thread (BR-3.4). **Not built, of BR-5.4:** merging two leads, labels on the leads table, leads in the menu's search |
+| F. The owner | Five reports | C, E. **Built** (BR-6.1): the pipeline, quotes by market, won and lost, renewals, commission, on `/reports` |
 | G. Workers' comp | Its own intake, loss runs and carrier quotes read, its renewal | B, BR-1.2 |
 
 A is mostly not code: profiles, counsel, the scanner contract. It is still first, because nothing after it can

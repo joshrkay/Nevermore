@@ -10,10 +10,14 @@ vi.mock("@/lib/brokerAuth", () => ({ startBrokerSignIn: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const followUpPeo = vi.fn();
 const withdrawFromPeo = vi.fn();
+const replyToPeo = vi.fn();
 vi.mock("@/lib/peoFollowUpApi", () => ({
   followUpPeo: (...a: unknown[]) => followUpPeo(...a),
   withdrawFromPeo: (...a: unknown[]) => withdrawFromPeo(...a),
+  replyToPeo: (...a: unknown[]) => replyToPeo(...a),
 }));
+const firmTemplatesOrNone = vi.fn();
+vi.mock("@/lib/templatesApi", () => ({ firmTemplatesOrNone: () => firmTemplatesOrNone() }));
 
 const { default: FollowUpOrWithdraw } = await import("./FollowUpOrWithdraw");
 
@@ -27,6 +31,9 @@ const props = {
 describe("FollowUpOrWithdraw", () => {
   beforeEach(() => {
     fetchMyMailbox.mockReset();
+    replyToPeo.mockReset();
+    firmTemplatesOrNone.mockReset();
+    firmTemplatesOrNone.mockResolvedValue({});
     followUpPeo.mockReset();
     withdrawFromPeo.mockReset();
     fetchMyMailbox.mockResolvedValue({ connected: true, provider: "google", address: "sam@acme.example" });
@@ -73,5 +80,37 @@ describe("FollowUpOrWithdraw", () => {
     await waitFor(() => expect(withdrawFromPeo).toHaveBeenCalledTimes(1));
     expect(withdrawFromPeo.mock.calls[0][0]).toMatchObject({ quoteRequestId: 7, to: ["dana@insperity.example"], reason: "peo_not_a_fit" });
     expect(withdrawFromPeo.mock.calls[0][0].note).toContain("withdraw Reyes Bakery");
+  });
+
+  // Break caught: a reply that goes with a follow-up's words or its fresh link, that can be sent saying nothing, or that withdraws.
+  it("replies on the thread in the advisor's own words, with no link, and can't be sent empty", async () => {
+    replyToPeo.mockResolvedValue({ quoteRequestId: 7, messageId: 54 });
+    render(<FollowUpOrWithdraw {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reply to Insperity" }));
+    const form = await screen.findByRole("form", { name: "Reply to Insperity" });
+    expect(within(form).getByLabelText("Your note")).toHaveValue("");
+    expect(within(form).getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(within(form).getByText("Goes on the Insperity thread as you write it, with no bundle link. Nothing else changes.")).toBeInTheDocument();
+    fireEvent.change(within(form).getByLabelText("Your note"), { target: { value: "Yes, the census is current as of the 3rd." } });
+    fireEvent.click(within(form).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(replyToPeo).toHaveBeenCalledTimes(1));
+    expect(replyToPeo.mock.calls[0][0]).toEqual({
+      quoteRequestId: 7, to: ["dana@insperity.example"], subject: "Re: Reyes Bakery: EAA-2026-0042, version 1", note: "Yes, the census is current as of the 3rd.",
+    });
+    expect(followUpPeo).not.toHaveBeenCalled();
+    expect(withdrawFromPeo).not.toHaveBeenCalled();
+  });
+
+  // Break caught: a firm's own template ignored for the text kept in code, or shown with its {fields} unfilled.
+  it("opens a follow-up and a withdrawal with the firm's own template, its fields filled in", async () => {
+    firmTemplatesOrNone.mockResolvedValue({ follow_up: "Hi {market}, any word on {company} ({file_id}, v{version})?", withdrawal: "Please close {company}." });
+    render(<FollowUpOrWithdraw {...props} />);
+    await waitFor(() => expect(firmTemplatesOrNone).toHaveBeenCalled());
+    await Promise.resolve();
+    fireEvent.click(await screen.findByRole("button", { name: "Follow up with Insperity" }));
+    await waitFor(() => expect(screen.getByLabelText("Your note")).toHaveValue("Hi Insperity, any word on Reyes Bakery (EAA-2026-0042, v1)?"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw from Insperity" }));
+    expect(screen.getByLabelText("Your note")).toHaveValue("Please close Reyes Bakery.");
   });
 });

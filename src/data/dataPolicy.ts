@@ -518,6 +518,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "A member of the firm removes a contact; an owner removes a licence or clears the producer number. Closing a firm (CRM-P1.7) deletes all four with the firm's other data. Platform admins read every firm's requests and licences, to keep the list of PEOs and carriers and to approve firms; no other firm reads any of it.",
   },
   {
+    id: "firm_message_templates",
+    label: "A firm's message templates",
+    sensitivity: "confidential",
+    examples: "What a firm's messages to a PEO or carrier open with, by kind (a first send, a follow-up, a withdrawal), and who last changed each. The words are the firm's own and may name its people. Every member of the firm reads them when writing a message; no other firm does.",
+    stored: { tables: ["firm_message_templates"], buckets: [], elsewhere: [] },
+    retention: "Kept until an owner clears one.",
+    deletion: "An owner clears a template in Settings, which puts the product's own text back. Closing a firm (CRM-P1.7) deletes them with the firm's other data.",
+  },
+  {
     id: "crm_records",
     label: "A firm's accounts, contacts, opportunities, calls, notes, tasks, placements and renewals",
     sensitivity: "confidential",

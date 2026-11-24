@@ -225,6 +225,8 @@
 \i supabase/migrations/20261129090000_daily_summary.sql
 \i supabase/migrations/20261130090000_import.sql
 \i supabase/migrations/20261201090000_roles_teams_visibility.sql
+\i supabase/migrations/20261202090000_lead_duplicates.sql
+\i supabase/migrations/20261203090000_templates_and_reply.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -404,6 +406,7 @@ BEGIN
   INSERT INTO public.firm_market_contacts (firm_id, peo_id, name, email) SELECT f, (SELECT min(id) FROM public.peos), 'A contact', 'contact@market.example' FROM unnest(ARRAY[fa, fb]) f;
   INSERT INTO public.market_requests (firm_id, name, line) SELECT f, 'An Unlisted PEO', 'peo' FROM unnest(ARRAY[fa, fb]) f;
   INSERT INTO public.firm_licences (firm_id, state, line) SELECT f, 'TX', 'property_casualty' FROM unnest(ARRAY[fa, fb]) f;
+  INSERT INTO public.firm_message_templates (firm_id, kind, body) SELECT f, 'send', 'Our opening text' FROM unnest(ARRAY[fa, fb]) f;
   INSERT INTO public.firm_licence_records (firm_id, npn) SELECT f, '1234567' FROM unnest(ARRAY[fa, fb]) f;
   -- Import (20261130090000): each firm's import with one row, which closing deletes.
   WITH i AS (INSERT INTO public.imports (firm_id, kind, file_name, total_rows) SELECT f, 'leads', 'book.csv', 1 FROM unnest(ARRAY[fa, fb]) f RETURNING id, firm_id)
@@ -1206,7 +1209,7 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'intake_invitations', 0, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'firm_market_contacts', 1, 'market_requests', 1, 'firm_licences', 1, 'firm_licence_records', 1, 'import_rows', 1, 'imports', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 8), 'a count per table of what was deleted');
+    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'firm_market_contacts', 1, 'market_requests', 1, 'firm_licences', 1, 'firm_licence_records', 1, 'firm_message_templates', 1, 'import_rows', 1, 'imports', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 8), 'a count per table of what was deleted');
   PERFORM pg_temp.is(8::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice, two mail notices, and the email about the firm''s request for a PEO (BR-3.6)');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
@@ -1225,6 +1228,7 @@ BEGIN
   PERFORM pg_temp.is((SELECT (SELECT count(*) FROM public.firm_market_contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.market_requests WHERE firm_id = fb)
                            + (SELECT count(*) FROM public.firm_licences WHERE firm_id = fb) + (SELECT count(*) FROM public.firm_licence_records WHERE firm_id = fb)), 4::bigint,
     'the other firm''s are kept');
+  PERFORM pg_temp.is((SELECT count(*) || ':' || count(*) FILTER (WHERE firm_id = fb) FROM public.firm_message_templates WHERE firm_id IN (fa, fb)), '1:1', 'the firm''s message templates are deleted and the other firm''s kept');
   PERFORM pg_temp.is((SELECT (SELECT count(*) FROM public.imports WHERE firm_id = fa) + (SELECT count(*) FROM public.import_rows WHERE firm_id = fa)), 0::bigint, 'the firm''s imports and their rows are deleted');
   PERFORM pg_temp.is((SELECT (SELECT count(*) FROM public.imports WHERE firm_id = fb) + (SELECT count(*) FROM public.import_rows WHERE firm_id = fb)), 2::bigint, 'the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fb) + (SELECT count(*) FROM public.contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fb), 3::bigint, 'and the other firm''s are kept');
@@ -1459,7 +1463,9 @@ DECLARE
     -- Import (CRM-X4.1): an owner's or a lead's, each asking assert_firm_writable. The review asks it too: it makes rows and undoes them.
     'import_preview', 'start_import', 'import_rows', 'undo_import',
     -- Roles, teams and visibility (CRM-X1.1): an owner's, each asking assert_firm_writable first
-    'change_member', 'save_team', 'delete_team', 'set_firm_visibility'];
+    'change_member', 'save_team', 'delete_team', 'set_firm_visibility',
+    -- Templates and replies (BR-3.5, BR-3.4): an owner's template and a member's reply, each asking assert_firm_writable first
+    'set_firm_message_template', 'reply_to_peo'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_answer_market_request', 'a platform admin''s: the answer to a firm''s request for a market',

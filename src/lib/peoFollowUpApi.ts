@@ -1,6 +1,7 @@
 // Following up and withdrawing on a PEO's thread (M-2.4, slice 6.9; docs/BROKER_CRM_BUILD.md D-1620 to D-1629). A follow-up is a send's three steps
 // (6.6): follow_up_peo records the message queued on the quote request's thread, a fresh bundle link is issued for the version already sent, and
 // attach_peo_link joins it. A withdrawal is one call: it closes the quote request, revokes its link and queues the message, which carries no link.
+// A reply (BR-3.4) is one call too: the agent's own words on the thread, with no link, changing nothing else.
 import { supabase } from "@/integrations/supabase/client";
 import { AdvisorApiError } from "@/lib/advisorApi";
 import type { WithdrawalReason } from "@/data/peoFollowUp";
@@ -52,6 +53,21 @@ export async function withdrawFromPeo(w: PeoWithdrawal): Promise<{ quoteRequestI
   if (made.error) throw new AdvisorApiError(made.error.message || "The withdrawal didn't go through. Try again.", made.error.code);
   workQueue();
   return { quoteRequestId: w.quoteRequestId, messageId: (made.data as unknown as { message_id: number }).message_id };
+}
+
+export interface PeoReply {
+  quoteRequestId: number;
+  to: string[];
+  subject: string;
+  note: string;
+}
+
+/** A reply on the thread (BR-3.4): the agent's words from their own mailbox, with no link, and nothing else changes. One call. */
+export async function replyToPeo(r: PeoReply): Promise<{ quoteRequestId: number; messageId: number }> {
+  const made = await supabase.rpc("reply_to_peo", { p_quote_request_id: r.quoteRequestId, p_to: r.to, p_subject: r.subject, p_note: r.note });
+  if (made.error) throw new AdvisorApiError(made.error.message || "The reply didn't go through. Try again.", made.error.code);
+  workQueue();
+  return { quoteRequestId: r.quoteRequestId, messageId: (made.data as unknown as { message_id: number }).message_id };
 }
 
 export interface ClosingWithdrawal {

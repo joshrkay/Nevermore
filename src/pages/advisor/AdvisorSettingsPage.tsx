@@ -15,6 +15,7 @@ import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
 import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
 import RegistrationStatement from "@/components/advisor/RegistrationStatement";
+import { MessageTemplates } from "@/components/advisor/MessageTemplates";
 import { FirmLicences } from "@/components/advisor/FirmLicences";
 import { DailySummarySettings } from "@/components/advisor/DailySummarySettings";
 
@@ -144,6 +145,14 @@ const AdvisorSettingsPage = () => {
         <section aria-labelledby="summary-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="summary-heading" className="font-semibold mb-2">Daily summary</h2>
           <DailySummarySettings />
+        </section>
+      )}
+
+      {/* BR-3.5: what the firm's messages to a PEO or carrier open with. An owner's to keep. */}
+      {firm && isOwner && !isSupport && (
+        <section aria-labelledby="templates-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="templates-heading" className="font-semibold mb-2">Message templates</h2>
+          <MessageTemplates firmId={firm.id} />
         </section>
       )}
 

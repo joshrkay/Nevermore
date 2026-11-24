@@ -1776,3 +1776,40 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2341 | **What the person may not see is only said to exist**, with whom to ask, exactly as for accounts (D-602): the mask is rebuilt in the browser from its two fields, so nothing else the answer held can reach the screen. Another firm's records are never said to exist. |
 | D-2342 | **Advice only.** The save is as it was; a check that fails shows nothing; nothing is asked until there is an email address, or a name with a business. |
 | D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649); the label column and filter on the leads table (issue 245); leads in the menu's search (`search_records` shares one budget across accounts, contacts, opportunities and quotes, and is restated whole to add a kind). Each is its own piece of work. |
+
+## Templates and replies
+
+`docs/BROKER_READINESS_PRD.md` slice E, parts four and five (BR-3.5, BR-3.4). Migration `20261203090000_templates_and_reply.sql`, SQL test `supabase/tests/templates_and_reply.sql` (5 cases), `src/data/messageTemplates.ts`, `src/lib/templatesApi.ts`, `src/components/advisor/MessageTemplates.tsx` (Settings), and the composers `FollowUpOrWithdraw`, `SendToPeo`, `SendToSeveralPeos`.
+
+| # | Decision |
+|---|---|
+| D-2350 | **One template for each kind of message, for the whole firm**: a first send, a follow-up, a withdrawal (`firm_message_templates`, keyed by firm and kind). Not a library of named templates and not a person's own: the need is that a firm's messages sound like the firm, and one text for each kind does that with nothing to choose at send time. |
+| D-2351 | **An owner keeps them; every member's composer reads them.** Clearing one puts the product's own text back (the row is deleted); there is no "empty" template. At most 5,000 characters. |
+| D-2352 | **A template only opens the note.** The agent edits it before sending, and the block the database adds under every message (the link, what it opens, when it lapses) is never part of one, so a template cannot remove or reword it. |
+| D-2353 | **Fields are filled in the browser, when the message is opened**: `{company}`, `{file_id}`, `{version}`, `{sent_on}`, `{market}`. A field with nothing to say is left out; braces round any other word stay as typed. The database stores and returns the text as written. One note to several PEOs names no one market. |
+| D-2354 | **A composer never waits on a template, and never writes over typed words.** Unread, it opens with the product's text. An update (M-2.3) takes no template: it says what changed. The closing withdrawal (Won, Lost, Archived) keeps the product's text, which is written to name no PEO. |
+| D-2355 | **A reply is the third thing on a thread** (`reply_to_peo`): the advisor's own words from their own mailbox, continuing the thread, with no link. Offered beside Follow up and Withdraw, to the people last sent to. |
+| D-2356 | **A reply changes nothing else**: no status, no link made or revoked. It is recorded and sent through the same path as a withdrawal's message (`record_peo_thread_message`, sent as written), so the firm's approval, the closing-firm rule and the mailbox rule hold for it as for every send. |
+| D-2357 | **Refused** on a closed quote request (send again to write to it), on one the product never sent (recorded by hand: there is no thread), for a PEO the employer no longer authorizes, with no connected mailbox, and with nothing to say. |
+| D-2358 | **Not built.** Attachments on a reply; a reply to a message that came in on a closed quote request; a person's own templates; templates for emails to employers. |
+
+## Reports
+
+`docs/BROKER_READINESS_PRD.md` slice F (BR-6.1; CRM-R1.1 to CRM-R1.3). Migration `20261204090000_reports.sql`, SQL test `supabase/tests/reports.sql` (8 cases), `src/data/reports.ts`, `src/lib/reportsApi.ts`, `src/pages/reports/ReportsPage.tsx` at `/reports`, `e2e/reports.spec.ts`.
+
+| # | Decision |
+|---|---|
+| D-2400 | **One read answers all five reports** (`firm_reports`): one set of controls applies to all, so one call keeps them agreeing with each other. Nothing is stored (CRM-R1.3); nothing reads an intake's answers. |
+| D-2401 | **Who is counted is Home's rule** (`home_shows`): a record by its account's owner, by the level rule; "whose" is Mine, My team (a lead) or Everyone (an owner), and one a person may not ask for is read as their own. A named agent as a filter is not built. |
+| D-2402 | **The period is two days in the person's own time zone**, at most 1,100 days. This month, this quarter, this year, the last 12 months, or two dates. The default is this quarter. |
+| D-2403 | **The pipeline and the coming renewals are as of today**, whatever the period: they say what is open and what is coming. The page says so. |
+| D-2404 | **"How long it has sat" is days since the opportunity was made**, with the median for each stage and the longest open listed first. Days in the current stage would need each stage change kept for searches with no intake, which it is not. |
+| D-2405 | **Quotes by market counts quote requests first sent in the period**: quoted is a quote received, declined is the status, placed is a placement made from that quote request. Win rate is placed over quoted. Days to a quote is the median from the send to the quote. |
+| D-2406 | **Won and lost goes by the day it happened**: the opportunity's own stamp, or for one closed from its intake's pipeline, the day the pipeline said so. By owner (the opportunity's, else the account's), by source, and lost by reason. |
+| D-2407 | **Renewals**: due by month for the next 12 (not marked as not renewed, not already kept), with how many have an opportunity; and for renewals dated in the period, kept (its opportunity won), not renewed, or open. |
+| D-2408 | **Commission is an owner's** (CRM-R1.2; a support session reads it too). Expected is a twelfth of a placement's yearly figure for each month of the period it is in force for any part of; received is what was recorded in the period. By month and by placement. For anyone else the answer holds none and the page shows no panel. |
+| D-2409 | **A line narrows every report**: opportunities by their line; quote requests, placements and renewals through their opportunity. A renewal or placement with no opportunity is counted only with every line. |
+| D-2410 | **Every figure's records are listed under it, each a link**, up to 50, and the page says when a list holds fewer than its figure. Opening the right table already filtered (CRM-R1.1) is not built: the tables do not take these filters from the address. |
+| D-2411 | **Each panel's table is saved as a CSV** built in the browser from what is on screen, every cell made safe to open (`src/lib/csv.ts`); not offered during a support session (D-128). |
+| D-2412 | **Reports in the menu opens `/reports`**; the intake funnel is a link on it and still marks the menu item. **Not built:** the leads and activity reports (P2 in the PRD), charts beyond the bars beside a number, a named agent or a source as a control, a report builder. |
+

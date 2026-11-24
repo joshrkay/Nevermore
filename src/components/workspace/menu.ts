@@ -83,7 +83,8 @@ export const MENU_ITEMS: MenuItem[] = [
     key: "accounts", label: "Accounts", to: "/accounts", icon: Building2, countKey: null, countWords: null,
     isCurrent: (pathname) => pathname === "/accounts" || pathname.startsWith("/accounts/") || pathname.startsWith("/opportunities/"),
   },
-  { key: "reports", label: "Reports", to: "/advisor/funnel", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/advisor/funnel" },
+  // The five reports (BR-6.1); the intake funnel is a link on that page and marks this item too.
+  { key: "reports", label: "Reports", to: "/reports", icon: BarChart3, countKey: null, countWords: null, isCurrent: (pathname) => pathname === "/reports" || pathname === "/advisor/funnel" },
 ];
 
 /** Settings sits at the foot of the menu, with the signed-in person. Its pages mark it too. */

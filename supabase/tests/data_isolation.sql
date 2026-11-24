@@ -277,6 +277,8 @@
 \i supabase/migrations/20261130090000_import.sql
 \i supabase/migrations/20261201090000_roles_teams_visibility.sql
 \i supabase/migrations/20261202090000_lead_duplicates.sql
+\i supabase/migrations/20261203090000_templates_and_reply.sql
+\i supabase/migrations/20261204090000_reports.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -849,6 +851,8 @@ BEGIN
     INSERT INTO public.firm_market_contacts (firm_id, peo_id, name, email) SELECT fid, p.id, 'Fixture contact', 'fixture@market.example' FROM public.peos p ORDER BY p.id LIMIT 1;
     INSERT INTO public.market_requests (firm_id, name, line) VALUES (fid, 'Fixture Unlisted PEO', 'peo');
     INSERT INTO public.firm_licences (firm_id, state, line) VALUES (fid, 'TX', 'property_casualty');
+    -- Templates (BR-3.5): the firm's own opening text for a follow-up.
+    INSERT INTO public.firm_message_templates (firm_id, kind, body) VALUES (fid, 'follow_up', 'Fixture template');
     INSERT INTO public.firm_licence_records (firm_id, npn) VALUES (fid, '1234567');
     -- Import (CRM-X4.1): an import of the firm's, with one row.
     WITH i AS (INSERT INTO public.imports (firm_id, kind, file_name, total_rows) VALUES (fid, 'leads', 'fixture.csv', 1) RETURNING id, firm_id)
@@ -1082,6 +1086,9 @@ INSERT INTO matrix VALUES
   ('public.market_requests',                            '{}', NULL),
   ('public.firm_licences',                              '{}', NULL),
   ('public.firm_licence_records',                       '{}', NULL);
+-- Templates (BR-3.5, 20261203090000): closed to the API; read through firm_message_templates, written by an owner through set_firm_message_template.
+INSERT INTO matrix VALUES
+  ('public.firm_message_templates',                     '{}', NULL);
 -- A person's own settings for the daily summary (BR-3.3, 20261129090000): closed to the API, read and changed through functions about the caller only
 -- (supabase/tests/daily_summary.sql). The first firm's advisor has a row.
 INSERT INTO public.member_settings (user_id, time_zone) VALUES (pg_temp.id('advisor'), 'America/Chicago');
@@ -1554,6 +1561,8 @@ INSERT INTO callable VALUES
                                                                      'SELECT public.follow_up_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'')', 'following up with a PEO on its thread (6.9)'),
   ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)', 'advisor',
                                                                      'SELECT public.withdraw_from_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'', ''other'')', 'withdrawing a submission from a PEO (6.9)'),
+  ('reply_to_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)', 'advisor',
+                                                                     'SELECT public.reply_to_peo(0, ARRAY[''peo@peo.example''], ''S'', ''N'')', 'replying to a PEO on its thread (BR-3.4)'),
   ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)', 'advisor',
                                                                      'SELECT public.close_submission_and_withdraw(gen_random_uuid(), ''lost'', NULL, NULL, ''S'', ''N'')', 'marking a submission Won, Lost or Archived with one withdrawal to every PEO still open (6.9)'),
   ('peo_send_context(p_session_id uuid, p_peo text)', 'advisor',
@@ -1810,6 +1819,14 @@ INSERT INTO callable VALUES
   ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
   ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
   ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
+-- Reports (BR-6.1, 20261204090000): the five reports ask the firm itself; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('firm_reports(p_firm_id uuid, p_from date, p_to date, p_whose text, p_line text, p_time_zone text)', 'own', NULL,
+   'a current member of the firm the call acts for reads counts, sums and lists of that firm''s records, each by the level rule, commission for an owner only; 42501 for anyone else');
+-- Templates (BR-3.5, 20261203090000): each asks the firm itself; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('firm_message_templates(p_firm_id uuid)', 'own', NULL, 'a current member of the firm the call acts for reads that firm''s own opening text for its messages; 42501 for anyone else'),
+  ('set_firm_message_template(p_firm_id uuid, p_kind text, p_body text)', 'own', NULL, 'a current owner of the firm sets or clears its opening text for one kind of message; 42501 for every other caller');
 -- The duplicate warning for a new lead (BR-5.4, 20261202090000): asks the firm itself; probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('duplicate_lead_check(p_firm_id uuid, p_name text, p_business text, p_email text, p_state text)', 'own', NULL,
@@ -2367,6 +2384,7 @@ INSERT INTO fprobe (fn, who, shape, call) VALUES
   -- M-2.4: a member gets past the firm to the PEO's authorization or the mailbox (22023, PT412); the closing withdrawal to the status rules.
   ('follow_up_peo', 'advisor', 'by_id', $$SELECT public.follow_up_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('withdraw_from_peo', 'advisor', 'by_id', $$SELECT public.withdraw_from_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('reply_to_peo', 'advisor', 'by_id', $$SELECT public.reply_to_peo({qr}, ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('close_submission_and_withdraw', 'advisor', 'by_id', $$SELECT public.close_submission_and_withdraw({sid}, 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('peo_send_context', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_send_context({sid}, 'Probe PEO'))$$),
   ('peo_registered_elsewhere', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.peo_registered_elsewhere({sid}))$$),
@@ -2775,6 +2793,16 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('remove_firm_market_contact', 'advisor', 'by_id', $$SELECT 'removed' || public.remove_firm_market_contact({firm}, {fmc})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
+
+-- ---- Reports (BR-6.1, 20261204090000): any member's read of their own firm.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('firm_reports', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.firm_reports({firm}, current_date - 30, current_date, 'everyone') -> 'pipeline')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+
+-- ---- Templates (BR-3.5, 20261203090000): any member reads the firm's, an owner sets one (to the same text each time).
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('firm_message_templates', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.firm_message_templates({firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:object$');
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
+  ('set_firm_message_template', 'admin', 'by_id', $$SELECT 'set' || public.set_firm_message_template({firm}, 'send', 'Probe')::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:set$', ARRAY['admin', 'owner_b']);
 
 -- ---- The duplicate warning for a new lead (BR-5.4, 20261202090000): any member's question about their own firm.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -3895,6 +3923,11 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.quote_comparison_notes', 'firm', 'its own firm_id and an opportunity of that firm; closed to the API, read through the comparison and written through add_comparison_note',
    $m$INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body) SELECT o.firm_id, o.id, 'internal', 'Probe {tag}' FROM public.opportunities o WHERE o.firm_id = {firm} ORDER BY o.created_at, o.id LIMIT 1 RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- Templates (20261203090000): a firm's own opening text for its messages.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.firm_message_templates', 'firm', 'its own firm_id; closed to the API, read through firm_message_templates, written by an owner through set_firm_message_template',
+   $m$INSERT INTO public.firm_message_templates (firm_id, kind, body) VALUES ({firm}, 'withdrawal', 'Probe {tag}') ON CONFLICT (firm_id, kind) DO UPDATE SET body = EXCLUDED.body RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 -- Sendable (20261127090000): a firm's contacts at markets, its requests for a market, and its licences on record.
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.firm_market_contacts', 'firm', 'its own firm_id; closed to the API, read through firm_market_contacts_list and the composer''s read, written through add_firm_market_contact',
@@ -4971,6 +5004,14 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
   ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
   ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
+-- Reports (20261204090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('firm_reports', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s reports, each record counted by the level rule and commission for an owner only; refused for anyone else');
+-- Templates and replies (20261203090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('firm_message_templates', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s templates; refused for anyone else'),
+  ('set_firm_message_template', 'firm_scoped', 'a current owner of the firm named sets that firm''s template; refused for anyone else'),
+  ('reply_to_peo', 'firm_scoped', 'a current member of the quote request''s firm, with a connected mailbox, replies on its PEO''s thread (BR-3.4); the same refusal for another firm''s quote request as for one that does not exist (4e)');
 -- The duplicate warning for a new lead (20261202090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('duplicate_lead_check', 'firm_scoped', 'a current member of the firm the call acts for is told which of that firm''s leads and accounts match what they typed, masked where they may not see one; refused for anyone else');
@@ -5251,6 +5292,8 @@ INSERT INTO secret_readers VALUES
    $$SELECT public.follow_up_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('withdraw_from_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text, p_reason text)',
    $$SELECT public.withdraw_from_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe', 'other')::text$$),
+  ('reply_to_peo(p_quote_request_id bigint, p_to text[], p_subject text, p_note text)',
+   $$SELECT public.reply_to_peo((SELECT b.quote_request_id FROM public.bundle_links b WHERE b.firm_id = {firm_a} LIMIT 1), ARRAY['peo@peo.example'], 'Probe', 'Probe')::text$$),
   ('close_submission_and_withdraw(p_session_id uuid, p_status text, p_note text, p_won_quote_request_id bigint, p_subject text, p_body text)',
    $$SELECT public.close_submission_and_withdraw((SELECT q.session_id FROM public.quote_requests q JOIN public.chamber_sessions s ON s.id = q.session_id WHERE s.firm_id = {firm_a} LIMIT 1), 'under_review', NULL, NULL, 'Probe', 'Probe')::text$$),
   ('accept_invitation(p_token_hash text, p_firm_address text)',

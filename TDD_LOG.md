@@ -1167,3 +1167,46 @@ Not yet run for this part: a mutation run of `import.sql`, and the full gate (ru
 1. `supabase/tests/roles_teams_visibility.sql`, 7 cases, before the migration. First run: case 1 (teams) passed; case 2 red, `which is what they now are gave agent/no team, expected lead/East`. Real: the change stamped the old membership's end and the new one's start with the wall clock, and `membership_is_current` goes by the transaction's time, so inside the changing transaction the old membership still read as current and the new one as not begun. Green: the transaction's time, as `end_membership_now` uses. Then all 7 passed. Case 3 is the first test of "My team": a lead reads, through Home, the lead of an agent in a team inside their own, and stops reading it when the agent is taken out.
 2. `data_isolation.sql` and `close_a_firm.sql` passed with the five functions listed, classed and probed, and the four writes among those a closing firm refuses.
 3. `RolesAndTeams.test.tsx` (9 cases), written with the component; green on first run. `AdvisorMembersPage.test.tsx` given a quiet stand-in for the new section's read; no assertion changed.
+
+## Leads catch up (BR-5.4, part): lead_duplicates.sql, 20261202090000_lead_duplicates.sql
+
+1. `supabase/tests/lead_duplicates.sql`, 3 cases, before the migration; green once it was written. `data_isolation.sql` passed with the function listed, classed and probed.
+2. `NewLeadDialog.test.tsx`, two new cases. Red: `useHref() may be used only in the context of a <Router>`: the warning links to the record, so the test renders inside a `MemoryRouter`. Then red on the debounce: one timer for all fields dropped a change typed in a second field; each field is now debounced on its own.
+
+## Templates and replies (BR-3.5, BR-3.4): templates_and_reply.sql, 20261203090000_templates_and_reply.sql
+
+1. `supabase/tests/templates_and_reply.sql`, 5 cases, written with the migration; green on first run.
+2. `data_isolation.sql` passed with the table in the matrix and the registry and the three functions listed, classed and probed. `close_a_firm.sql`: first edit refused (`AssertionError`: the file did not load `20261202090000_lead_duplicates.sql`, which it now must since it reaches the newest migration); both added, the table in the plan's counts, the two writes among those a closing firm refuses. Green.
+3. `messageTemplates.test.ts` (3), `MessageTemplates.test.tsx` (2), and two new cases in `FollowUpOrWithdraw.test.tsx` (a reply; a firm's template with its fields filled). Green on first run; the existing composer suites unchanged.
+
+## Slice E: mutation run
+
+Each rule broken in its migration, its test run, the migration put back. All eight red:
+
+| Broken | Test |
+|---|---|
+| Any member sets a template | templates_and_reply |
+| A reply waits for a link | templates_and_reply |
+| A reply on a closed quote request | templates_and_reply |
+| A reply on another firm's quote request | data_isolation |
+| Anyone changes a member | roles_teams_visibility |
+| A lead the person may not see is named | lead_duplicates |
+| An agent imports | import |
+| A lead undoes another person's import | import |
+
+## Reports (BR-6.1, CRM-R1.1 to R1.3): reports.sql, 20261204090000_reports.sql, reports.spec.ts
+
+1. `supabase/tests/reports.sql`, 8 cases, written with the migration. Red, in turn: `three open, worth 5,000 gave 3/5000.00` and `by owner gave ada@example.test=2` (the test's own expectations: a sum's scale, and a person's name is their address here); then `a longer period reaches the older ones ... gave 2/2, expected 2/3`, a fixture I had dropped while editing. No change to the function was needed. One thing learned before writing it: an opportunity is won only through its intake's pipeline, so the fixture wins a search that way.
+2. `data_isolation.sql` with `firm_reports` listed, classed and probed with two firms. `report_limits` is closed to the API as the other limit functions are.
+3. `reports.test.ts` (6) and `ReportsPage.test.tsx` (10) before wiring; green on first run. `typecheck:app` red on four lines of `reportsApi.ts` (zod objects are optional under this project's settings): each list is mapped field by field.
+4. The full unit run: three red in `AdvisorSettingsClose.test` and `AdvisorSettingsLeave.test` (`Found multiple elements with the role "alert"`): Settings gained the owner's templates section, whose read those files did not stand in for. Given a quiet stand-in, as the sections before it were. `WorkspaceShell.test`: Reports now opens `/reports`, changed on purpose.
+
+5. `e2e/reports.spec.ts`: an owner opens Reports in a new firm, then with records in it, in a browser against the real function. Green on first run.
+
+### Reports: mutation run
+
+Each rule broken in `20261204090000_reports.sql`, its test run, the migration put back. All five red: an agent counts everyone's searches (reports); an agent reads commission (reports); won and lost ignores the period (reports); another firm's searches are counted (reports); anyone reads a firm's reports (data_isolation).
+
+### Slice E (templates, replies) and slice F: the gate
+
+`npm run lint` (0 errors), `typecheck:functions`, `typecheck:app`, `npm test` (380 files, 7,526 tests), `npm run build`, `supabase/tests/run.sh` (144 passed), `npx playwright test` (38 passed).

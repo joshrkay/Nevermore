@@ -38,6 +38,7 @@ const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const HomePage = lazy(() => import("./pages/home/HomePage"));
 const ImportPage = lazy(() => import("./pages/import/ImportPage"));
+const ReportsPage = lazy(() => import("./pages/reports/ReportsPage"));
 const QuotesPage = lazy(() => import("./pages/quotes/QuotesPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
@@ -107,6 +108,8 @@ const AppRoutes = () => (
                   <Route path="/home" element={<HomePage />} />
                   {/* Import (CRM-X4.1): an owner or a lead brings a book in from a CSV. */}
                   <Route path="/import" element={<ImportPage />} />
+                  {/* Reports (BR-6.1, CRM-R1.1): the pipeline, quotes by market, won and lost, renewals and commission. */}
+                  <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
                   <Route path="/inbox" element={<InboxPage />} />

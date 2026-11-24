@@ -122,7 +122,8 @@ describe("the workspace menu", () => {
     expect(href("Inbox")).toBe("/inbox");
     expect(href("Leads")).toBe("/leads");
     expect(href("Accounts")).toBe("/accounts");
-    expect(href("Reports")).toBe("/advisor/funnel");
+    // The five reports have their own page (BR-6.1); the intake funnel is a link on it.
+    expect(href("Reports")).toBe("/reports");
     expect(href("Settings")).toBe("/settings");
   });
 
@@ -145,6 +146,7 @@ describe("the workspace menu", () => {
     ["/accounts/abc", "Accounts"],
     // An opportunity's page belongs to Accounts (CRM-O1.1b, D-421).
     ["/opportunities/abc", "Accounts"],
+    ["/reports", "Reports"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
