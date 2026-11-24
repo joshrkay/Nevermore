@@ -188,7 +188,10 @@ test("a provisioned firm's owner invites a person, who joins and works there; an
     await test.step("the agent works in the firm: they add an account", async () => {
       await agentPage.getByRole("link", { name: "Continue" }).click();
       await setUpSecondFactor(agentPage);
-      await expect(agentPage.getByRole("heading", { name: "Submissions" })).toBeVisible();
+      // A member who has just joined lands on Home (CRM-H1, D-2201), which the database answers for this firm: the page draws, and is not a failed load.
+      await expect(agentPage.getByRole("heading", { name: "Home", level: 1 })).toBeVisible();
+      await expect(agentPage.getByRole("button", { name: /try again/i })).toHaveCount(0);
+      await expect(agentPage.getByRole("status", { name: "Loading Home" })).toHaveCount(0);
       await agentPage.goto(`${firmUrl(TEAM_ADDRESS)}/accounts`);
       await agentPage.getByRole("button", { name: "New account" }).first().click();
       const dialog = agentPage.getByRole("dialog");
