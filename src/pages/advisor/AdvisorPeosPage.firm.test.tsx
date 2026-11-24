@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "@/components/workspace/workspaceContext";
@@ -42,7 +42,8 @@ describe("the PEOs page, for a firm", () => {
     show(workspace({}));
     expect(await screen.findByRole("heading", { name: "Your firm's contacts at Harbor PEO" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Ask for a PEO or carrier that isn't listed" })).toBeInTheDocument();
-    expect(market.loadFirmMarketContacts).toHaveBeenCalledWith("f1");
+    // The heading is drawn before the read is asked for: wait for the ask rather than assume it has happened.
+    await waitFor(() => expect(market.loadFirmMarketContacts).toHaveBeenCalledWith("f1"));
     expect(market.loadAdminMarketRequests).not.toHaveBeenCalled();
   });
 
