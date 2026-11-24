@@ -224,6 +224,7 @@
 \i supabase/migrations/20261128090000_home.sql
 \i supabase/migrations/20261129090000_daily_summary.sql
 \i supabase/migrations/20261130090000_import.sql
+\i supabase/migrations/20261201090000_roles_teams_visibility.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1456,7 +1457,9 @@ DECLARE
     -- Sendable (BR-1.3, BR-1.4, BR-2.2): a member's contacts at markets and requests for one, an owner's licences on record, each asking assert_firm_writable
     'add_firm_market_contact', 'remove_firm_market_contact', 'request_market', 'set_firm_npn', 'add_firm_licence', 'remove_firm_licence',
     -- Import (CRM-X4.1): an owner's or a lead's, each asking assert_firm_writable. The review asks it too: it makes rows and undoes them.
-    'import_preview', 'start_import', 'import_rows', 'undo_import'];
+    'import_preview', 'start_import', 'import_rows', 'undo_import',
+    -- Roles, teams and visibility (CRM-X1.1): an owner's, each asking assert_firm_writable first
+    'change_member', 'save_team', 'delete_team', 'set_firm_visibility'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_answer_market_request', 'a platform admin''s: the answer to a firm''s request for a market',

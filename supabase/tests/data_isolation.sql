@@ -275,6 +275,7 @@
 \i supabase/migrations/20261128090000_home.sql
 \i supabase/migrations/20261129090000_daily_summary.sql
 \i supabase/migrations/20261130090000_import.sql
+\i supabase/migrations/20261201090000_roles_teams_visibility.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1808,6 +1809,13 @@ INSERT INTO callable VALUES
   ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
   ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
   ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
+-- Roles, teams and visibility (CRM-X1.1, 20261201090000): an owner's, each asking the firm itself; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('change_member(p_firm_id uuid, p_user_id uuid, p_role text, p_team_id uuid)', 'own', NULL, 'a current owner of the firm gives one of its members another role or team; 42501 for every other caller, PT423 for a closing firm or a support session'),
+  ('save_team(p_firm_id uuid, p_team_id uuid, p_name text, p_parent_team_id uuid)', 'own', NULL, 'a current owner of the firm makes, renames or moves one of its teams; 42501 for every other caller'),
+  ('delete_team(p_firm_id uuid, p_team_id uuid)', 'own', NULL, 'a current owner of the firm deletes one of its teams that nobody has belonged to; 42501 for every other caller'),
+  ('set_firm_visibility(p_firm_id uuid, p_visibility text)', 'own', NULL, 'a current owner of the firm sets whether everyone sees every record or each person their own; 42501 for every other caller'),
+  ('firm_teams_page(p_firm_id uuid)', 'own', NULL, 'a current owner of the firm (or a support session) reads its teams, its members'' roles and teams, and the setting; 42501 for anyone else');
 -- Import (CRM-X4.1, 20261130090000): each asks the firm itself, and that the caller is an owner or a lead of it; probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('import_preview(p_firm_id uuid, p_kind text, p_rows jsonb)', 'own', NULL, 'an owner or a lead of the firm the call acts for reads what a set of rows would make, and nothing is made; 42501 for anyone else'),
@@ -2762,6 +2770,16 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('remove_firm_market_contact', 'advisor', 'by_id', $$SELECT 'removed' || public.remove_firm_market_contact({firm}, {fmc})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
+
+-- ---- Roles, teams and visibility (CRM-X1.1, 20261201090000): an owner's. Each call is one that changes nothing it should not for the next probe: a team
+-- made under a new name, the setting set to what it is, a member "changed" to the role and team they have, a team that is not there deleted.
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
+  ('firm_teams_page', 'admin', 'by_id', $$SELECT jsonb_typeof(public.firm_teams_page({firm}) -> 'teams')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$', ARRAY['admin', 'owner_b']),
+  ('save_team', 'admin', 'by_id', $$SELECT length(public.save_team({firm}, NULL, 'Probe ' || gen_random_uuid(), NULL)::text)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:36$', ARRAY['admin', 'owner_b']),
+  ('set_firm_visibility', 'admin', 'by_id', $$SELECT 'set' || public.set_firm_visibility({firm}, (SELECT f.visibility FROM public.firms f WHERE f.id = {firm}))::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:set$', ARRAY['admin', 'owner_b']),
+  ('change_member', 'admin', 'by_id', $$SELECT 'same' || public.change_member({firm}, auth.uid(), 'owner', NULL)::text$$, ARRAY['42501', 'PT404', 'P0002', '23514'], '^ok:same$', ARRAY['admin', 'owner_b']);
+INSERT INTO fprobe (fn, who, shape, call, refused, positive) VALUES
+  ('delete_team', 'admin', 'by_id', $$SELECT public.delete_team({firm}, gen_random_uuid())::text$$, ARRAY['42501', 'P0002'], ARRAY[]::text[]);
 
 -- ---- Import (CRM-X4.1, 20261130090000): an owner's (or a lead's) to run. {imp} is each firm's fixture import, which no caller started: an owner reads its
 -- problems, and nobody adds rows to it or (probed last) undoes another firm's.
@@ -4944,6 +4962,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
   ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
   ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
+-- Roles, teams and visibility (20261201090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('change_member', 'firm_scoped', 'a current owner of the firm named gives one of that firm''s members another role or team; refused for anyone else'),
+  ('save_team', 'firm_scoped', 'a current owner of the firm named makes, renames or moves one of that firm''s teams; refused for anyone else'),
+  ('delete_team', 'firm_scoped', 'a current owner of the firm named deletes one of that firm''s teams; refused for anyone else'),
+  ('set_firm_visibility', 'firm_scoped', 'a current owner of the firm named sets that firm''s visibility; refused for anyone else'),
+  ('firm_teams_page', 'firm_scoped', 'a current owner of the firm named (or support) reads that firm''s teams and members; refused for anyone else');
 -- Import (20261130090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('import_preview', 'firm_scoped', 'an owner or a lead of the firm the call acts for reads what rows would make; nothing is made; refused for anyone else'),
