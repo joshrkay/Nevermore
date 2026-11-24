@@ -491,6 +491,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "Nobody can change or delete an entry, an admin included. Deleting a record removes its history in the same step, and closing a firm (CRM-P1.7) deletes the firm's histories with its other data. A firm reads it through one function, as a member of the record's firm; who at Nevermore acted reads as \"Nevermore\", with no name, email or id (D-33).",
   },
   {
+    id: "firm_markets_and_licences",
+    label: "A firm's contacts at PEOs and carriers, its requests for one, and its licences on record",
+    sensitivity: "confidential",
+    examples: "The people a firm deals with at a listed PEO or carrier (name, role, email, phone, and who added them), seen by no other firm and offered first when that firm sends. A firm's requests for a PEO or carrier that isn't listed (its name, what it quotes, a contact there, a note) and the platform admin's answer. The firm's National Producer Number, each state and line it says it is licensed in (life and health, or property and casualty), the licence number and expiry where given, and when a platform admin last recorded that they checked them. Never an intake's answers.",
+    stored: { tables: ["firm_market_contacts", "market_requests", "firm_licences", "firm_licence_records"], buckets: [], elsewhere: [] },
+    retention: "Kept by the firm until a member removes the contact or an owner removes the licence. A request is kept with its answer.",
+    deletion: "A member of the firm removes a contact; an owner removes a licence or clears the producer number. Closing a firm (CRM-P1.7) deletes all four with the firm's other data. Platform admins read every firm's requests and licences, to keep the list of PEOs and carriers and to approve firms; no other firm reads any of it.",
+  },
+  {
     id: "crm_records",
     label: "A firm's accounts, contacts, opportunities, calls, notes, tasks, placements and renewals",
     sensitivity: "confidential",

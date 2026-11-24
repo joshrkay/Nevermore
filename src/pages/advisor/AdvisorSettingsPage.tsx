@@ -15,6 +15,7 @@ import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
 import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
 import RegistrationStatement from "@/components/advisor/RegistrationStatement";
+import { FirmLicences } from "@/components/advisor/FirmLicences";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -133,6 +134,14 @@ const AdvisorSettingsPage = () => {
         <section aria-labelledby="registrations-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="registrations-heading" className="font-semibold">Registrations with PEOs</h2>
           <RegistrationStatement firmId={firm.id} />
+        </section>
+      )}
+
+      {/* BR-2.2: the firm's producer number and licences on record. An owner keeps them; every member reads them. */}
+      {firm && !isSupport && (
+        <section aria-labelledby="licences-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="licences-heading" className="font-semibold mb-2">Licences</h2>
+          <FirmLicences firmId={firm.id} />
         </section>
       )}
 

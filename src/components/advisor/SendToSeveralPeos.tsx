@@ -166,7 +166,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     if (state === "withdrawn") return `The employer withdrew ${c.peo}. Nothing more can be sent to it.`;
     if (authorizations && state !== "authorized") return `The employer hasn't authorized ${c.peo} to receive their packet. Ask them to add it.`;
     if (contexts[c.peo] === "failed") return `We couldn't load ${c.peo}'s contacts. Close this and open it again to try again.`;
-    if (contexts[c.peo] && peopleOf(c).length === 0) return `${c.peo}'s profile has no contact with an email, so there is nobody to send it to.`;
+    if (contexts[c.peo] && peopleOf(c).length === 0) return `There is nobody to send it to at ${c.peo}: its profile has no contact with an email, and your firm has none of its own there. Add your contact in Settings, under PEOs.`;
     return null;
   };
   // The employer as the agent says them: the certifier's first name.

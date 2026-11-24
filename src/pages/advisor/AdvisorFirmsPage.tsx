@@ -8,6 +8,7 @@ import { decideFirm, fetchFirmStates, fetchWaitingFirms, liftFirmSuspension, sto
 import { firmHostname, firmUrlFrom } from "@/lib/firmHost";
 import { endSupportSession, endTime, fetchSupportSessions, startSupportSession, SUPPORT_REASON_MAX, type SupportSession } from "@/lib/supportApi";
 import { LoadFailed } from "@/components/workspace/states";
+import { AdminFirmLicences } from "@/components/advisor/FirmLicences";
 import { failureWords, DID_NOT_GO_THROUGH } from "@/components/workspace/form";
 
 type Load =
@@ -164,6 +165,8 @@ const AdvisorFirmsPage = () => {
                     <span className="font-mono text-xs text-muted-foreground break-all">{firmHostname(f.address)}</span>
                     <span className="text-xs text-muted-foreground ml-auto">{`Signed up ${formatDateTime(f.signedUpAt)}${f.signedUpByEmail ? ` by ${f.signedUpByEmail}` : ""}`}</span>
                   </div>
+                  {/* Q-1.1, BR-2.2: what the firm says it is licensed for, read before the decision and recorded as checked. */}
+                  <AdminFirmLicences firmId={f.id} firmName={f.name} />
                   <div>
                     <label htmlFor={`note-${f.id}`} className="text-xs text-muted-foreground">{`Note for ${f.name}`}</label>
                     <input id={`note-${f.id}`} value={notes[f.id] ?? ""} maxLength={500}

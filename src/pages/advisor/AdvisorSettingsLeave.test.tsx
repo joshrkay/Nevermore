@@ -7,6 +7,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // firm can't. What happens afterwards (the person's sign-in is kept and they see no firm) is the page they land on when the browser
 // asks again; here the browser's reload is replaced and only asked for.
 const auth = { user: { id: "u1", email: "sam@acme.example" }, session: { access_token: "tok" }, loading: false, isAnonymous: false, sessionEnded: null, signOut: vi.fn() };
+// Slice A's sections on this page (BR-1.3, BR-1.4, BR-2.2) read through src/lib/marketApi; their own tests are beside them, so here they read nothing.
+vi.mock("@/lib/marketApi", () => ({
+  LICENCE_LINE_LABELS: { life_health: "Life and health", property_casualty: "Property and casualty" },
+  loadFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketContacts: () => Promise.resolve([]),
+}));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));

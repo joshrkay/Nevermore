@@ -224,6 +224,18 @@ _Avoid_: ready for a PEO, ready to send, ready
 A person at a PEO that a **Requirement profile** version names: their name, role, work email and phone. Read by advisors only, never by prospects.
 _Avoid_: rep, PEO rep, underwriter (an underwriter is one kind of PEO contact)
 
+**Firm's contact** (code: `firm_market_contacts`, `add_firm_market_contact`, `FirmMarketContacts`; BR-1.3, D-2100 to D-2103):
+A person one firm deals with at a listed PEO or carrier: their name, an email address, and a role and phone when given. It is the firm's own: every member of the firm reads it, any member adds or removes one, and no other firm sees it. A firm keeps at most ten at one PEO or carrier. When that firm sends there, its own contacts are offered first and the **PEO contacts** of the profile in use after them; an address the firm keeps is offered once, as the firm names it. Kept on the PEOs page, under the PEO or carrier.
+_Avoid_: my contact (it is the firm's), PEO contact (that is the profile's, the same for every firm), contact on its own (a **Contact** is a person at an account)
+
+**Request for a PEO or carrier** (code: `market_requests`, `request_market`, `admin_answer_market_request`, `AskForMarket`; BR-1.4, D-2104 to D-2106):
+A firm's ask for a PEO or carrier that isn't listed: its name, what it quotes, and, when given, who the firm deals with there and a note. Any member asks, on the PEOs page; the firm reads its own requests and no other firm's. A platform admin answers each once: listed, naming the PEO or carrier on the list it now is, or not, with the reason the firm reads. One open request for a name and line by a firm at a time.
+_Avoid_: market request (on a screen), suggestion, ticket
+
+**Licences on record** (code: `firm_licences`, `firm_licence_records`, `FirmLicences`; BR-2.2, Q-1.1, D-2107 to D-2112):
+What a firm says it is licensed for: its National Producer Number, and each state and line (life and health, or property and casualty) with the licence number and expiry when given. An owner keeps them in Settings; every member reads them; a platform admin reads them beside the decision on the firm and records that they were checked. A record changed after that reads "Changed since Nevermore checked them". A send to a carrier is refused unless a property and casualty licence that has not expired is on record. They are what the firm stated: the product looks nothing up, and which states a licence must cover is counsel's to say.
+_Avoid_: verified licence, licensed (of a firm, as a fact the product knows)
+
 **Advisor follow-up**:
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items. It reaches the prospect only through an information request, which starts out naming the fields marked this way.
 _Avoid_: open item, flag

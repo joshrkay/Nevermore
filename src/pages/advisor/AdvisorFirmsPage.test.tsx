@@ -3,6 +3,15 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 
+// Slice A's sections on this page (BR-1.3, BR-1.4, BR-2.2) read through src/lib/marketApi; their own tests are beside them, so here they read nothing.
+vi.mock("@/lib/marketApi", () => ({
+  LICENCE_LINE_LABELS: { life_health: "Life and health", property_casualty: "Property and casualty" },
+  loadFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketContacts: () => Promise.resolve([]),
+}));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "admin@example.com" }, signOut: vi.fn() }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const advisor = { fetchIsAdmin: vi.fn() };

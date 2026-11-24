@@ -1085,3 +1085,31 @@ Screen code, `mutate.sh` against every file changed under `src/` that holds logi
 Not mutated: `src/integrations/supabase/types.ts` (types only), the browser test and its stand-in (`e2e/stack/rest.mjs`, whose embedding the browser test itself holds: before it the quote's page could not read its quotes there).
 
 Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 364 files, 7366 tests passed; build green; `supabase/tests/run.sh`: All 133 SQL tests passed; `npm run test:e2e`: 36 passed. The verify harness (every migration behind real PostgREST, the real `dispatch-outbox`): a prospect starts and certifies an intake (204, the database's own File ID, version 1, the intake a PEO intake), the confirmation is sent, the advisor alert waits with `no_recipients` as it does for a firm with no member, and a prospect's PATCH of `line` is answered 204 and leaves the line as it was.
+
+## Sendable (BROKER_READINESS_PRD slice A): a firm's contacts at a market, asking for one, licences on record (sendable.sql, 20261127090000_sendable.sql)
+
+Not the cycle-by-cycle record the sections above are. The tests were written before the code they describe, but each layer's tests were written together and first run after its code, so there is no red line per case to quote. What stands in for it is the mutation run below, which shows each named rule's test red when the rule is broken.
+
+1. `supabase/tests/sendable.sql`, 14 cases, written whole before `20261127090000_sendable.sql`. First run with the migration: 12 passed at once. Two reds, both real:
+   - the set-up's published profile (`Name where the contacts came from, and when it was checked, before publishing`): a fixture slip, placed as `peo_send.sql` places one (triggers off). Not a red of the code.
+   - case 13, `the admin reads that it changed since gave false, expected true`: the change and the check were stamped with the transaction's time, so a change made after a check in one transaction read as not after it. Green: both stamped with `clock_timestamp()`.
+2. `data_isolation.sql`, the migration added to its load list. It failed five times in turn, each a registry the new tables and functions were missing from, and each fixed by saying what they are: `public.firm_licence_records is not in the registry` (and the other three tables); `holds no rows, so the matrix proves nothing for it` (fixtures for both firms); `privileged functions not in the registry` (16 functions classed); `firm-scoped functions with no two-firm probe` (9 probes, the two removals last); `functions the API roles can execute that the data_isolation allowlist doesn't cover` (13 listed). Then: all cases passed.
+3. `close_a_firm.sql`, loaded through this migration (it stopped at 20261125120000). Red: `no function that changes data is left out of the closing's read-only list ... gave add_firm_licence, add_firm_market_contact, admin_answer_market_request, admin_record_licence_check, remove_firm_licence, remove_firm_market_contact, request_market, set_firm_npn` (six guarded, two exempt as a platform admin's). Red again: `every guarded function still asks whether the firm is closing gave add_firm_licence, remove_firm_licence, set_firm_npn`: the three asked through a shared helper, which the test can't see. Green: each asks `assert_firm_writable` itself, first.
+4. `peo_send.sql` loads this migration (it restates `peo_send_context`, D-105); its case 24 expects each contact marked `"own": false`.
+5. `src/data/dataPolicy.test.ts`. Red: `firm_market_contacts is stored but belongs to no data class` (four tables). Green: the class `firm_markets_and_licences`, and its row in `docs/DATA_HANDLING.md`.
+6. `src/lib/marketApi.test.ts` (14 cases), written before `marketApi.ts`. Red: `Failed to resolve import "./marketApi"`. Green on the first run with the module.
+7. `FirmMarkets.test.tsx` (13 cases), `FirmLicences.test.tsx` (9), `AdvisorPeosPage.firm.test.tsx` (4), written after the components. First run failed on the test files' own set-up (`supabaseUrl is required`, `useAuth must be used within an AuthProvider`: the client and the sign-in stubbed), then passed.
+8. The full unit run then failed eight existing cases in four files (`AdvisorFirmsPage.test`, `AdvisorPeosPage.test`, `AdvisorSettingsClose.test`, `AdvisorSettingsLeave.test`): the new sections read through a database the tests don't have, and drew a second alert and a second "Try again". Each file now gives `@/lib/marketApi` a quiet stand-in; no assertion was changed.
+9. `SendToSeveralPeos.test.tsx`: the sentence for a PEO with nobody to send to now names the firm's own contacts and where to add one; the two cases that quote it were given the new words.
+10. `e2e/workers-comp-search.spec.ts`: before the send to the carrier, the send is refused for no licence (in the database's words, with no quote request made), the founder adds a Texas property and casualty licence in Settings, the page stops saying nothing can be sent to a carrier, and the send goes. First run failed one step later (`columnheader 'Carrier'` not found): the test had left the page on Settings. Fixed in the test.
+
+### Mutation (Sendable)
+
+18 breaks, one at a time, each against its own tests. 17 red on the first run:
+
+- Screens and API (7): a market's contacts not narrowed to the market on screen; the admin's choices not narrowed to the request's line, and not to listed markets; a lapsed licence counted as leave to send to a carrier (two ways); any error's text shown in place of the screen's own words.
+- Database (11): another firm's contacts offered in the composer; a lapsed licence passing the gate; a life and health licence passing it; the gate applied to PEO sends; an agent changing licences; a member removing another firm's contact; a request refused for a market of another line; an answer naming a market of another line; the profile's contact offered twice beside the firm's; a contact added at a market taken off the list.
+
+One stayed green: a declined answer still naming a market (the screen never sends one). `marketApi.test.ts` now declines with a market chosen and expects none sent; red under the break.
+
+Not mutated: the two-firm probes and registries in `data_isolation.sql` (the gate's own cases prove it fails on an unregistered table and an unprobed function), `types.ts`.

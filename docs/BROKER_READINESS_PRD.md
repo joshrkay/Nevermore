@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-11-24 |
-| **Status** | Draft for the founder to challenge. Nothing here is decided, and nothing in it is built |
+| **Status** | Draft for the founder to challenge. Built so far, from slice A: BR-1.3, BR-1.4 and BR-2.2 (`docs/BROKER_CRM_BUILD.md`, "Sendable", for what was decided and what was left out). Nothing else here is built or decided |
 | **What it covers** | What stands between the broker's workspace as built and a PEO or workers' comp brokerage working in it every day: the markets, the launch gates, the daily workflow, what the employer is handed, moving a firm in, and the depth of each line |
 | **Builds on** | `docs/BROKER_CRM_PRD.md` (the workspace), `docs/QUOTING_PLATFORM_STORIES.md` (Epics K to R), `docs/BROKER_CRM_STORIES.md`, `docs/adr/0029` (lines) |
 | **Stories** | Not written yet. Each requirement below carries an ID (BR-…) and, where one exists, the story it finishes |
@@ -374,7 +374,7 @@ and an answer on protected health information. Do none of it until two lines are
 
 | Slice | What is true at the end | Needs first |
 |---|---|---|
-| A. Sendable | A firm approved today sends today, under approved wording, with its licence on record | BR-1.1 to 1.4, BR-2.1, 2.2, 2.4 |
+| A. Sendable | A firm approved today sends today, under approved wording, with its licence on record | BR-1.1 to 1.4, BR-2.1, 2.2, 2.4. **Built:** BR-1.3, BR-1.4, BR-2.2. **Open, and not code:** BR-1.1, BR-1.2 (profiles), BR-2.1 (counsel), BR-2.4 (production) |
 | B. Checked | Five brokers and two competitors' demos are written up; this document is revised | A, BR-2.6 |
 | C. The day | Home, my tasks, reminders, the first-run checklist | B |
 | D. The win | The complete comparison, the employer's copy, the firm's logo | B, BR-2.3 |

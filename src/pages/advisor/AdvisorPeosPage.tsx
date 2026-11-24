@@ -1,5 +1,5 @@
 import { LINE_LABELS, lineOf } from "@/data/lines";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import PeoPanel from "@/components/advisor/peos/PeoPanel";
@@ -8,6 +8,8 @@ import { localToday } from "@/data/peoProfiles";
 import { fetchHasPlatformRole, fetchIsAdmin, loadPeoCatalogDirectory, loadPeoDirectory, type PeoDirectoryEntry } from "@/lib/advisorApi";
 import AddPeoForm from "@/components/advisor/peos/AddPeoForm";
 import { LoadFailed } from "@/components/workspace/states";
+import { AdminMarketRequests, AskForMarket, FirmMarketContacts } from "@/components/advisor/peos/FirmMarkets";
+import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; peos: PeoDirectoryEntry[]; isAdmin: boolean; catalogue: boolean };
 
@@ -23,6 +25,10 @@ const AdvisorPeosPage = () => {
   const [attempt, setAttempt] = useState(0);
   const [params, setParams] = useSearchParams();
   const today = localToday();
+  // The firm the person works in, when the page is inside the workspace: what it keeps and asks about these markets is its own (BR-1.3, BR-1.4).
+  const workspace = useContext(WorkspaceContext);
+  // A support session looks at what a member sees on the lists it was given, and these are not among them, so it is offered neither.
+  const firm = workspace && !workspace.isSupport ? workspace.firm : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +68,7 @@ const AdvisorPeosPage = () => {
           </div>
         )}
         {load.kind === "error" && <LoadFailed error={load.error} what="the PEOs" onRetry={reload} />}
+        {load.kind === "ready" && load.isAdmin && <AdminMarketRequests markets={load.peos} />}
         {load.kind === "ready" && (
           <div className="grid gap-6 lg:grid-cols-[18rem_1fr]">
             <div className="space-y-4 min-w-0">
@@ -96,7 +103,11 @@ const AdvisorPeosPage = () => {
                 </nav>
               )}
             </div>
-            {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} showContacts={!load.catalogue} today={today} onChanged={reload} />}
+            <div className="space-y-6 min-w-0">
+              {selected && <PeoPanel key={selected.id} peo={selected} isAdmin={load.isAdmin} showContacts={!load.catalogue} today={today} onChanged={reload} />}
+              {selected && firm && selected.listed && <FirmMarketContacts key={`contacts-${selected.id}`} firmId={firm.id} peoId={selected.id} peoName={selected.name} canChange />}
+              {firm && <AskForMarket firmId={firm.id} canChange />}
+            </div>
           </div>
         )}
       </main>

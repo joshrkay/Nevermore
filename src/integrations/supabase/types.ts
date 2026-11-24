@@ -1373,6 +1373,30 @@ export type Database = {
         Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
         Returns: Json
       }
+      // Sendable (20261127090000; BR-1.3, BR-1.4, BR-2.2): a firm's own contacts at a PEO or carrier, its requests for one that isn't listed and a platform
+      // admin's answer, and the firm's producer number and licences on record with the admin's check.
+      firm_market_contacts_list: { Args: { p_firm_id: string }; Returns: Json }
+      add_firm_market_contact: {
+        Args: { p_firm_id: string; p_peo_id: number; p_name: string; p_role: string | null; p_email: string; p_phone: string | null }
+        Returns: Json
+      }
+      remove_firm_market_contact: { Args: { p_firm_id: string; p_contact_id: number }; Returns: undefined }
+      request_market: {
+        Args: { p_firm_id: string; p_name: string; p_line: string; p_contact_name: string | null; p_contact_email: string | null; p_note: string | null }
+        Returns: Json
+      }
+      firm_market_requests: { Args: { p_firm_id: string }; Returns: Json }
+      admin_market_requests: { Args: Record<PropertyKey, never>; Returns: Json }
+      admin_answer_market_request: { Args: { p_request_id: number; p_listed: boolean; p_answer: string | null; p_peo_id: number | null }; Returns: undefined }
+      firm_licence_record: { Args: { p_firm_id: string }; Returns: Json }
+      set_firm_npn: { Args: { p_firm_id: string; p_npn: string | null }; Returns: undefined }
+      add_firm_licence: {
+        Args: { p_firm_id: string; p_state: string; p_line: string; p_licence_number: string | null; p_expires_on: string | null }
+        Returns: Json
+      }
+      remove_firm_licence: { Args: { p_firm_id: string; p_licence_id: number }; Returns: undefined }
+      admin_firm_licence_record: { Args: { p_firm_id: string }; Returns: Json }
+      admin_record_licence_check: { Args: { p_firm_id: string }; Returns: undefined }
       // Renewals (20261120110000, CRM-A2.4a): an account's renewals with days away, and adding, changing and deleting one from a version; "Didn't renew" and its undo.
       account_renewals: { Args: { p_firm_id: string | null; p_account_id: string; p_time_zone?: string }; Returns: Json }
       add_renewal: {
