@@ -1768,7 +1768,7 @@ The rest of slice A is not code and is not done by this: published profiles for 
 
 ## Leads catch up
 
-`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which three of four are built (the duplicate warning, leads in the menu's search, and the Label column and filter). Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
+`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), all four parts built: the duplicate warning, leads in the menu's search, the Label column and filter, and merging two leads. Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
 
 | # | Decision |
 |---|---|
@@ -1780,7 +1780,12 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2345 | **The leads table has a Label column and filter, as the accounts table has** (issue 245; `20261206090000_lead_labels_column.sql`, `supabase/tests/lead_labels_column.sql`, 4 cases). A row holds the lead's labels in order (`leads_row` gains `labels`). The filter is any of, none of, or is empty, by the word whatever its case; a word the firm no longer has matches nothing and is not refused. Sorting is by the labels read as one text, the unlabelled last. The column is under Columns, not among the story's default ones. |
 | D-2346 | **Everything that goes through the table's filters takes the Label filter with no change of its own**: saved views, view counts, a bulk change of "everything that matches", and an export's filters. |
 | D-2347 | **The Label column is not in the export**, as on the accounts table: the export registry has no column for it. The filter still narrows what is exported. |
-| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649). Its own piece of work. |
+| D-2349 | **Nothing of BR-5.4 is left unbuilt.** "Keep separate" has no lead counterpart: a lead carries no possible-duplicate mark (D-645), and the warning while a lead is typed is advice only (D-2342). |
+| D-2360 | **Two leads are merged by the rules two contacts are** (CRM-S4.3; D-640; `20261207090000_merge_leads.sql`, `supabase/tests/merge_leads.sql`, 4 cases): the person says which is kept and, for each field that differs, whose value; a field not named keeps the kept lead's value or takes the removed one's where the kept is blank; both versions are sent and a lead changed since refuses the merge (40001). The fields: name, title, business, email, phone, city, state, employees, current provider, note, status (with why it is not a fit) and owner. Where the lead came from stays the kept lead's. |
+| D-2361 | **Who.** Whoever may see both and change both by the level rule; a lead they may not change is named in the refusal (42501), and the preview says so before they try. A lead in the bin is as not there (PT404). A converted lead is refused in words (22023): it is its account now, and those are merged instead. |
+| D-2362 | **What moves.** Calls, notes and tasks; labels (one in common once); emails. A lead has one conversation: the removed lead's becomes the kept lead's when it has none, and when both have one its messages join the kept lead's and it goes, so a reply sent later to the removed conversation's own address is held as mail for nobody. Its bulk-change records go with it, as an account's do (D-647). |
+| D-2363 | **History and the old address** (D-643, D-644): the removed lead's history is copied to the kept lead, marked as its, with one "merged" entry; `merged_records` takes the kind `lead`; `resolve_merged_lead` follows the chain and answers only to someone who may see the kept lead. The lead's page follows an old address there and says so. |
+| D-2364 | **Its own preview and merge** (`merge_leads_preview`, `merge_leads`), beside `merge_preview` and `resolve_merged_record`, which stay as they are. The screen is the accounts' merge dialog given a third kind. Merge is offered on the leads table when exactly two are chosen by hand; the dialog says why not, in the database's words, when the person may not. There is no undo (D-203). |
 
 ## Templates and replies
 

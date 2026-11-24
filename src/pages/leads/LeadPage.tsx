@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { Navigate, useParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import PlaceToWrite from "@/components/conversations/PlaceToWrite";
 import { LeadDetailsPanel } from "@/components/leads/LeadDetails";
@@ -16,6 +16,8 @@ import { useWorkspace } from "@/components/workspace/useWorkspace";
 import { useAuth } from "@/hooks/useAuth";
 import { ContactError } from "@/lib/contactApi";
 import { reopenLead, type LeadFields, type LeadPage as Page } from "@/lib/leadPageApi";
+import { MergedNote } from "@/components/accounts/MergedAddress";
+import { resolveMergedLead } from "@/lib/mergeApi";
 
 /**
  * A lead's page (story CRM-L2.1, slice 8.5, screen 15; `/leads/:id` inside the workspace layout). The database decides who may see the lead and who may change it
@@ -28,6 +30,15 @@ const LeadPage = () => {
   const firmId = firm?.id ?? null;
   const queryClient = useQueryClient();
   const query = useLeadPageQuery(firmId, id);
+  // The old address of a lead that was merged into another (CRM-S4.3, D-644): asked once, and only when this address is told "not found". The database
+  // answers only for a kept lead the person may see, so an old address never shows that a lead exists to someone who could not have opened it.
+  const merged = useQuery({
+    queryKey: ["merged-address", firmId, "lead", id],
+    queryFn: () => resolveMergedLead(firmId as string, id),
+    enabled: firmId !== null && query.data === null,
+    retry: false,
+    staleTime: 0,
+  });
   const retry = useCallback(() => void query.refetch(), [query]);
   const waiting = firmId === null || (query.data === undefined && !query.isError);
   const slow = useSlowLoad(waiting, retry);
@@ -64,12 +75,17 @@ const LeadPage = () => {
   }
   const page = query.data;
   // The same answer for a lead that is gone, another firm's, or one the person's level does not reach.
-  if (!page) return <Frame><NotAvailable noun="lead" backTo="/leads" backLabel="Back to all leads" /></Frame>;
+  if (!page) {
+    if (merged.isLoading) return <Frame><LeadLoading slow={slow.slow} onTryAgain={slow.tryAgain} /></Frame>;
+    if (merged.data) return <Navigate to={`/leads/${merged.data.id}`} replace state={{ mergedInto: merged.data.name }} />;
+    return <Frame><NotAvailable noun="lead" backTo="/leads" backLabel="Back to all leads" /></Frame>;
+  }
   const { lead } = page;
   // Calls, notes and tasks can be acted on only where the database will take them: not during a Nevermore support session (ADR 0024).
   const canAct = firmId !== null && !isSupport;
   const body = (
     <>
+      <MergedNote />
       <LeadHeader
         lead={lead}
         canEmail={lead.status !== "converted" && !page.inBin}

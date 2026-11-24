@@ -227,6 +227,10 @@
 \i supabase/migrations/20261201090000_roles_teams_visibility.sql
 \i supabase/migrations/20261202090000_lead_duplicates.sql
 \i supabase/migrations/20261203090000_templates_and_reply.sql
+\i supabase/migrations/20261204090000_reports.sql
+\i supabase/migrations/20261205090000_search_leads.sql
+\i supabase/migrations/20261206090000_lead_labels_column.sql
+\i supabase/migrations/20261207090000_merge_leads.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1465,7 +1469,9 @@ DECLARE
     -- Roles, teams and visibility (CRM-X1.1): an owner's, each asking assert_firm_writable first
     'change_member', 'save_team', 'delete_team', 'set_firm_visibility',
     -- Templates and replies (BR-3.5, BR-3.4): an owner's template and a member's reply, each asking assert_firm_writable first
-    'set_firm_message_template', 'reply_to_peo'];
+    'set_firm_message_template', 'reply_to_peo',
+    -- Merging two leads (CRM-S4.3): a member's, asking assert_firm_writable first
+    'merge_leads'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
     'admin_answer_market_request', 'a platform admin''s: the answer to a firm''s request for a market',

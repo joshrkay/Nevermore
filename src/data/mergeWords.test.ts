@@ -38,3 +38,18 @@ describe("what the merge screens say", () => {
     expect(mergedWords("contact", "Sam Reyes", "S. Reyes", { activities: 0 })).toBe("S. Reyes was merged into Sam Reyes.");
   });
 });
+
+describe("what merging two leads says (CRM-S4.3, BR-5.4)", () => {
+  it("names a lead by its name, says its status in the table's words with why it is not a fit, and what would move", async () => {
+    const { mergeMovesWords, mergeRecordName, mergeValueWords } = await import("./mergeWords");
+    const { mergeWarning } = await import("./merge");
+    expect(mergeRecordName("lead", { name: "Dana Cole" })).toBe("Dana Cole");
+    expect(mergeValueWords("status", "working", { not_fit_reason: null })).toBe("Working");
+    expect(mergeValueWords("status", "not_fit", { not_fit_reason: "too_small" })).toBe("Not a fit: Too small");
+    expect(mergeValueWords("note", null)).toBe("Blank");
+    expect(mergeMovesWords("lead", { activities: 1, emails: 0, labels: 0 }, "Dana Cole")[0]).toBe("1 call, note or task moves to Dana Cole.");
+    expect(mergeMovesWords("lead", { activities: 2, emails: 3, labels: 1 }, "Dana Cole")[0]).toBe("2 calls, notes and tasks, 3 emails, 1 label move to Dana Cole.");
+    expect(mergeMovesWords("lead", {}, "Dana Cole")[0]).toBe("Nothing is attached to the lead that will be removed, so there is nothing to move to Dana Cole.");
+    expect(mergeWarning("lead", "Dana Cole", "D. Cole")).toBe("D. Cole will be deleted and everything on it moved to Dana Cole. A merged lead can't be split again.");
+  });
+});

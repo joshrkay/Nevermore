@@ -281,6 +281,7 @@
 \i supabase/migrations/20261204090000_reports.sql
 \i supabase/migrations/20261205090000_search_leads.sql
 \i supabase/migrations/20261206090000_lead_labels_column.sql
+\i supabase/migrations/20261207090000_merge_leads.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1821,6 +1822,14 @@ INSERT INTO callable VALUES
   ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
   ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
   ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
+-- Merging two leads (BR-5.4, CRM-S4.3, 20261207090000): each asks the firm itself; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('merge_leads_preview(p_firm_id uuid, p_kept_id uuid, p_removed_id uuid)', 'own', NULL,
+   'a current member of the firm who may see both leads reads them side by side with what a merge would move; PT404 for a lead that is not there or not theirs to see'),
+  ('merge_leads(p_kept_id uuid, p_removed_id uuid, p_choices jsonb, p_kept_version integer, p_removed_version integer, p_firm_id uuid)', 'own', NULL,
+   'a current member of the firm who may change both leads merges them; PT404 for a lead that is not there or not theirs to see, 42501 for one they may not change'),
+  ('resolve_merged_lead(p_firm_id uuid, p_id uuid)', 'own', NULL,
+   'a current member of the firm the call acts for is led from a merged-away lead''s address to the kept lead, if they may see it; nothing otherwise');
 -- Leads in the menu's search (BR-5.4, 20261205090000): asks the firm itself; probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('search_leads(p_firm_id uuid, p_query text)', 'own', NULL, 'a current member of the firm the call acts for finds that firm''s leads they may see by the level rule; 42501 for anyone else');
@@ -2799,7 +2808,8 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
 
--- ---- Leads in the menu's search (BR-5.4, 20261205090000): any member's read of their own firm.
+-- ---- Merging two leads (20261207090000). Probed with one lead twice, so the member gets past the firm and the sight of the rows and meets the same-lead
+-- refusal (22023) and nothing changes; every other caller is refused as not there. What a merge does is merge_leads.sql's. Declared after {lead} below.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('search_leads', 'advisor', 'by_id', $$SELECT jsonb_typeof(public.search_leads({firm}, 'probe') -> 'rows')$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$');
 
@@ -2851,6 +2861,10 @@ INSERT INTO fprobe_ids
 SELECT CASE l.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END, 'lead', l.id::text
 FROM public.leads l
 WHERE l.name IN ('Fixture lead a', 'Fixture lead b');
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
+  ('merge_leads_preview', 'advisor', 'by_id', $$SELECT public.merge_leads_preview({firm}, {lead}, {lead}) ->> 'problem'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:Choose two different leads\.$'),
+  ('merge_leads', 'advisor', 'by_id', $$SELECT public.merge_leads({lead}, {lead}, '{}'::jsonb, 1, 1, {firm})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^22023$'),
+  ('resolve_merged_lead', 'advisor', 'by_id', $$SELECT public.resolve_merged_lead({firm}, {lead})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:<null>$');
 INSERT INTO fprobe (fn, who, shape, call, refused, positive) VALUES
   ('bulk_leads_preview', 'advisor', 'by_id',
    $$SELECT NULLIF(public.bulk_leads_preview({firm}, 'field', jsonb_build_object('field', 'city', 'value', 'Probe ' || gen_random_uuid()), NULL, jsonb_build_array({lead}::text)) ->> 'will_change', '0')$$,
@@ -5013,6 +5027,11 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
   ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
   ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
+-- Merging two leads (20261207090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('merge_leads_preview', 'firm_scoped', 'a current member who may see both leads reads them side by side; another firm''s lead is as not there (4e)'),
+  ('merge_leads', 'firm_scoped', 'a current member who may change both leads merges them; another firm''s lead is as not there (4e)'),
+  ('resolve_merged_lead', 'firm_scoped', 'a current member of the firm the call acts for is led from a merged-away lead to the kept one, if they may see it (4e)');
 -- Leads in the menu's search (20261205090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('search_leads', 'firm_scoped', 'a current member of the firm the call acts for finds that firm''s leads, each by the level rule; refused for anyone else');

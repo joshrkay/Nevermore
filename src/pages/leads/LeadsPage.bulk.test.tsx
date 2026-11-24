@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { LeadRow } from "@/lib/leadsApi";
@@ -42,6 +42,12 @@ vi.mock("@/lib/leadsBulkApi", async (original) => ({
   listLeadsBin: (...a: unknown[]) => bulk.listLeadsBin(...a),
   restoreLeads: (...a: unknown[]) => bulk.restoreLeads(...a),
 }));
+const merge = { previewLeadMerge: vi.fn(), mergeLeads: vi.fn() };
+vi.mock("@/lib/mergeApi", async (original) => ({
+  ...(await original<typeof import("@/lib/mergeApi")>()),
+  previewLeadMerge: (...a: unknown[]) => merge.previewLeadMerge(...a),
+  mergeLeads: (...a: unknown[]) => merge.mergeLeads(...a),
+}));
 const firmLabels = vi.fn();
 vi.mock("@/lib/bulkChangeApi", async (original) => ({ ...(await original<typeof import("@/lib/bulkChangeApi")>()), firmLabels: (...a: unknown[]) => firmLabels(...a) }));
 const exportRows = vi.fn();
@@ -82,7 +88,7 @@ const selectTwo = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 beforeEach(() => {
-  for (const fn of [listLeads, countLeadViews, listFirmMembers, firmLabels, exportRows, ...Object.values(bulk)]) fn.mockReset();
+  for (const fn of [listLeads, countLeadViews, listFirmMembers, firmLabels, exportRows, ...Object.values(bulk), ...Object.values(merge)]) fn.mockReset();
   listLeads.mockResolvedValue({ rows, total: 3 });
   countLeadViews.mockImplementation(async (_f: string, views: { name: string }[]) => views.map((v) => ({ name: v.name, total: 1 })));
   listFirmMembers.mockResolvedValue([{ value: "u1", label: "Dana Reyes" }, { value: "u2", label: "Marcus Hale" }]);
@@ -92,12 +98,17 @@ afterEach(() => cleanup());
 
 describe("the leads' bulk bar (CRM-L1.1b)", () => {
   // Catches: an action the story lists missing from the bar, or offered out of the story's order.
-  it("offers Change owner, Change status, Not a fit, Set a field, Label, Delete, Export and Clear once rows are selected", async () => {
+  it("offers Change owner, Change status, Not a fit, Set a field, Label, Delete, Export and Clear once rows are selected, and Merge for exactly two", async () => {
     const user = userEvent.setup();
     renderAt();
     await selectTwo(user);
+    // Merge (CRM-S4.3, BR-5.4) is for two leads chosen by hand: it is there for two, and gone for three.
+    expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(
+      ["Change owner", "Change status", "Not a fit", "Set a field", "Label", "Delete", "Merge", "Export", "Clear"]);
+    await user.click(screen.getByRole("checkbox", { name: "Select Ana Solis" }));
     expect(within(bar()!).getAllByRole("button").map((b) => b.textContent)).toEqual(
       ["Change owner", "Change status", "Not a fit", "Set a field", "Label", "Delete", "Export", "Clear"]);
+    await user.click(screen.getByRole("checkbox", { name: "Select Ana Solis" }));
   });
 
   // Catches (ADR 0024, from mutation): Nevermore support offered a change of anything; it keeps Export's line and Clear.
@@ -280,5 +291,51 @@ describe("the bin (CRM-L1.1b, D-806)", () => {
     await user.click(within(d).getByRole("button", { name: "Restore Owen Park" }));
     expect(bulk.restoreLeads).toHaveBeenCalledWith("f1", ["l9"]);
     expect(await within(d).findByText("Owen Park is back in the leads.")).toBeInTheDocument();
+  });
+});
+
+describe("merging two leads from the table (CRM-S4.3, BR-5.4)", () => {
+  // Catches: Merge that opens for the wrong two, that merges without the choices and versions shown, or that leaves the removed lead selected on the page.
+  it("opens the merge for the two chosen, the first as the one kept, merges from what was shown, and asks for the page again", async () => {
+    merge.previewLeadMerge.mockResolvedValue({
+      kind: "lead", problem: null, differs: ["name", "status"],
+      kept: { id: "l1", version: 2, name: "Lucia Reyes", status: "working", not_fit_reason: null }, removed: { id: "l2", version: 4, name: "L. Reyes", status: "not_fit", not_fit_reason: "too_small" },
+      moves: { activities: 2, emails: 1, labels: 0 },
+    });
+    merge.mergeLeads.mockResolvedValue({ record: { id: "l1", version: 3 }, removed: { id: "l2", name: "L. Reyes" }, moved: { activities: 2, emails: 1, labels: 0 } });
+    const user = userEvent.setup();
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Merge" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Merge two leads")).toBeInTheDocument();
+    await waitFor(() => expect(merge.previewLeadMerge).toHaveBeenCalledWith("f1", rows[0].id, rows[1].id));
+    const status = await within(dialog).findByRole("group", { name: "Status" });
+    expect(within(status).getByRole("radio", { name: /^Working\s*,\s*kept$/ })).toBeChecked();
+    expect(within(status).getByRole("radio", { name: /^Not a fit: Too small\s*,\s*removed$/ })).toBeInTheDocument();
+    expect(within(dialog).getByText("2 calls, notes and tasks, 1 email move to Lucia Reyes.")).toBeInTheDocument();
+    expect(within(dialog).getByText("L. Reyes will be deleted and everything on it moved to Lucia Reyes. A merged lead can't be split again.")).toBeInTheDocument();
+    const calls = listLeads.mock.calls.length;
+    await user.click(within(dialog).getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(merge.mergeLeads).toHaveBeenCalledWith("f1", "l1", "l2", { name: "kept", status: "kept" }, { kept: 2, removed: 4 }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(listLeads.mock.calls.length).toBeGreaterThan(calls));
+    expect(bar()).toBeNull();
+  });
+
+  // Catches: a merge the database would refuse offered with a Merge button anyway.
+  it("says why two leads can't be merged, in the database's words, and offers only Close", async () => {
+    merge.previewLeadMerge.mockResolvedValue({
+      kind: "lead", problem: "L. Reyes is converted. Merge the account it became instead.", differs: [],
+      kept: { id: "l1", version: 2, name: "Lucia Reyes" }, removed: { id: "l2", version: 4, name: "L. Reyes" }, moves: {},
+    });
+    const user = userEvent.setup();
+    renderAt();
+    await selectTwo(user);
+    await user.click(within(bar()!).getByRole("button", { name: "Merge" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("L. Reyes is converted. Merge the account it became instead.");
+    expect(within(dialog).queryByRole("button", { name: "Merge" })).not.toBeInTheDocument();
+    expect(merge.mergeLeads).not.toHaveBeenCalled();
   });
 });

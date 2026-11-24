@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyApiError } from "@/lib/advisorApi";
-import type { AccountMergeField, ContactMergeField, MergeChoices, MergeKind } from "@/data/merge";
+import type { AccountMergeField, ContactMergeField, LeadMergeField, MergeChoices, MergeKind, MergeSubject } from "@/data/merge";
 
 // What merging asks the database (story CRM-S4.3b; 20261121100000_merge_records.sql). Five calls: the preview a person chooses from, merging two accounts, merging two
 // contacts of one account, "keep separate", and where a merged-away record's old address leads. The database decides every rule (who may see and who may change both,
@@ -48,7 +48,7 @@ const previewSchema = z.object({
 });
 
 export interface MergePreview {
-  kind: MergeKind;
+  kind: MergeSubject;
   /** Why the caller may not merge these two, in words; null when they may. */
   problem: string | null;
   /** The fields whose values differ: the ones to choose between. */
@@ -139,6 +139,56 @@ export async function mergeContacts(
   if (!parsed.success) throw new MergeError("failed", FAILED);
   const d = parsed.data;
   return { record: d.record as ContactMerged["record"], removed: named(d.removed), moved: { activities: d.moved.activities_moved, opportunities: d.moved.opportunities_repointed } };
+}
+
+// ---------- two leads (CRM-S4.3, BR-5.4; 20261207090000_merge_leads.sql): a preview and a merge of their own, by the same rules ----------
+const leadPreviewSchema = z.object({
+  problem: z.string().nullable(), differs: z.array(z.string()), kept: sideSchema, removed: sideSchema, moves: z.record(z.string(), z.number().int().min(0)),
+});
+
+/** Both leads side by side, what differs and what would move. The caller must see both (kind "notFound" otherwise). */
+export async function previewLeadMerge(firmId: string, keptId: string, removedId: string): Promise<MergePreview> {
+  const { data, error } = await supabase.rpc("merge_leads_preview", { p_firm_id: firmId, p_kept_id: keptId, p_removed_id: removedId });
+  if (error) throw refusal(error, "Couldn't load the leads to merge. Try again.");
+  const parsed = leadPreviewSchema.safeParse(data);
+  if (!parsed.success) throw new MergeError("failed", "Couldn't load the leads to merge. Try again.");
+  const d = parsed.data;
+  return { kind: "lead", problem: d.problem, differs: d.differs, kept: d.kept as MergePreview["kept"], removed: d.removed as MergePreview["removed"], moves: d.moves };
+}
+
+export interface LeadMerged {
+  record: Record<string, unknown> & { id: string; version: number };
+  removed: { id: string; name: string };
+  moved: { activities: number; emails: number; labels: number };
+}
+
+const leadMergedSchema = z.object({
+  record: sideSchema, removed: removedSchema,
+  moved: z.object({ activities: z.number().int().min(0), emails: z.number().int().min(0), labels: z.number().int().min(0) }),
+});
+
+/** Merges two leads: everything on `removedId` moves to `keptId` and `removedId` is deleted. There is no undo. */
+export async function mergeLeads(
+  firmId: string, keptId: string, removedId: string, choices: MergeChoices<LeadMergeField>, versions: MergeVersions,
+): Promise<LeadMerged> {
+  const { data, error } = await supabase.rpc("merge_leads", {
+    p_kept_id: keptId, p_removed_id: removedId, p_choices: choices, p_kept_version: versions.kept, p_removed_version: versions.removed, p_firm_id: firmId,
+  });
+  if (error) throw refusal(error, FAILED);
+  const parsed = leadMergedSchema.safeParse(data);
+  if (!parsed.success) throw new MergeError("failed", FAILED);
+  const d = parsed.data;
+  return { record: d.record as LeadMerged["record"], removed: named(d.removed), moved: { activities: d.moved.activities, emails: d.moved.emails, labels: d.moved.labels } };
+}
+
+/** Where a merged-away lead's old address leads: the lead it became, when the person may see it; null otherwise. */
+export async function resolveMergedLead(firmId: string, id: string): Promise<{ id: string; name: string } | null> {
+  const { data, error } = await supabase.rpc("resolve_merged_lead", { p_firm_id: firmId, p_id: id });
+  if (error) throw refusal(error, "Couldn't look that lead up. Try again.");
+  if (data === null) return null;
+  const parsed = removedSchema.safeParse(data);
+  if (!parsed.success) throw new MergeError("failed", "Couldn't look that lead up. Try again.");
+  return named(parsed.data);
 }
 
 const separateSchema = z.object({ record: sideSchema, was_duplicate_of: person });

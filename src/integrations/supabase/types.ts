@@ -1375,6 +1375,10 @@ export type Database = {
       }
       // The duplicate warning for a new lead (20261202090000, BR-5.4).
       duplicate_lead_check: { Args: { p_firm_id: string; p_name: string; p_business: string | null; p_email: string | null; p_state: string | null }; Returns: Json }
+      // Merging two leads (20261207090000, CRM-S4.3, BR-5.4): the preview, the merge, and where a merged-away lead's address leads.
+      merge_leads_preview: { Args: { p_firm_id: string; p_kept_id: string; p_removed_id: string }; Returns: Json }
+      merge_leads: { Args: { p_kept_id: string; p_removed_id: string; p_choices?: Json; p_kept_version?: number | null; p_removed_version?: number | null; p_firm_id?: string | null }; Returns: Json }
+      resolve_merged_lead: { Args: { p_firm_id: string; p_id: string }; Returns: Json | null }
       // Leads in the menu's search (20261205090000, BR-5.4): the firm's leads that hold every word typed, five at most.
       search_leads: { Args: { p_firm_id: string; p_query?: string | null }; Returns: Json }
       // Reports (20261204090000, BR-6.1): the five reports in one read, worked out when asked.

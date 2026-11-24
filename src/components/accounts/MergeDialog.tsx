@@ -6,29 +6,30 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { FormActions, SaveRefused, useWorkspaceForm, WorkspaceForm } from "@/components/workspace/form";
 import {
-  ACCOUNT_MERGE_FIELDS, CONTACT_MERGE_FIELDS, MERGE_FIELD_LABELS, mergeWarning, type AccountMergeField, type ContactMergeField, type MergeChoice, type MergeKind,
+  ACCOUNT_MERGE_FIELDS, CONTACT_MERGE_FIELDS, LEAD_MERGE_FIELDS, MERGE_FIELD_LABELS, mergeWarning, type AccountMergeField, type ContactMergeField, type LeadMergeField,
+  type MergeChoice, type MergeSubject,
 } from "@/data/merge";
 import { defaultMergeChoice, mergedWords, mergeMovesWords, mergeRecordName, mergeValueWords } from "@/data/mergeWords";
-import { MergeError, mergeAccounts, mergeContacts, previewMerge, type MergePreview } from "@/lib/mergeApi";
+import { MergeError, mergeAccounts, mergeContacts, mergeLeads, previewLeadMerge, previewMerge, type MergePreview } from "@/lib/mergeApi";
 
 // Merging two records on screen (story CRM-S4.3a, screen 37; D-203, D-210, D-640 to D-649, D-660 to D-669), the dialog for two accounts and for two contacts of one
 // account. It asks the database's own preview (`merge_preview`) for both records with their versions, the fields that differ and what would move, shows them side by
 // side with one choice for each field that differs, says exactly what will happen (and that there is no undo) before anything changes, and merges from the versions it
-// showed. Who may merge them is the database's: when the preview says why the person may not, that is shown instead of the button. Fields use the shared form kit.
+// showed. Two leads are merged the same way (CRM-S4.3, BR-5.4), through their own preview and merge. Who may merge them is the database's: when the preview says why the person may not, that is shown instead of the button. Fields use the shared form kit.
 
 export interface MergedRecords {
-  kind: MergeKind;
+  kind: MergeSubject;
   kept: { id: string; name: string };
   removed: { id: string; name: string };
 }
 
-const FIELDS: Record<MergeKind, readonly (AccountMergeField | ContactMergeField)[]> = { account: ACCOUNT_MERGE_FIELDS, contact: CONTACT_MERGE_FIELDS };
+const FIELDS: Record<MergeSubject, readonly (AccountMergeField | ContactMergeField | LeadMergeField)[]> = { account: ACCOUNT_MERGE_FIELDS, contact: CONTACT_MERGE_FIELDS, lead: LEAD_MERGE_FIELDS };
 const schema = z.object({ choices: z.record(z.string(), z.enum(["kept", "removed"])) });
-const NOUN: Record<MergeKind, string> = { account: "account", contact: "contact" };
+const NOUN: Record<MergeSubject, string> = { account: "account", contact: "contact", lead: "lead" };
 
 export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged }: {
   firmId: string;
-  kind: MergeKind;
+  kind: MergeSubject;
   /** The record the merge starts by keeping; the dialog lets the person keep the other one instead. */
   keptId: string;
   removedId: string;
@@ -40,7 +41,7 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
   // Said above the choices when both records were asked again because one changed while the person was choosing.
   const [reloaded, setReloaded] = useState<string | null>(null);
   const key = ["merge-preview", firmId, kind, pair.kept, pair.removed];
-  const preview = useQuery({ queryKey: key, queryFn: () => previewMerge(firmId, kind, pair.kept, pair.removed), retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false });
+  const preview = useQuery({ queryKey: key, queryFn: () => (kind === "lead" ? previewLeadMerge(firmId, pair.kept, pair.removed) : previewMerge(firmId, kind, pair.kept, pair.removed)), retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false });
   const data: MergePreview | null = preview.data ?? null;
   const keptName = data ? mergeRecordName(kind, data.kept) : "";
   const removedName = data ? mergeRecordName(kind, data.removed) : "";
@@ -59,6 +60,10 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
         if (kind === "account") {
           const done = await mergeAccounts(firmId, data.kept.id, data.removed.id, choices, versions);
           return { done, words: mergedWords(kind, keptName, removedName, done.moved) };
+        }
+        if (kind === "lead") {
+          const done = await mergeLeads(firmId, data.kept.id, data.removed.id, choices, versions);
+          return { done, words: mergedWords(kind, keptName, removedName, { activities: done.moved.activities }) };
         }
         const done = await mergeContacts(firmId, data.kept.id, data.removed.id, choices, versions);
         return { done, words: mergedWords(kind, keptName, removedName, { activities: done.moved.activities }) };
@@ -145,7 +150,7 @@ export function MergeDialog({ firmId, kind, keptId, removedId, onClose, onMerged
                             <label key={side} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 text-sm hover:bg-muted">
                               {/* Enter on a radio must not submit the form: a merge is made from the Merge button only. */}
                               <input type="radio" name={`merge-${f}`} checked={chosen(f) === side} onChange={() => choose(f, side)} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} />
-                              <span className="break-words">{mergeValueWords(f, (side === "kept" ? data.kept : data.removed)[f])}<span className="sr-only">, {side}</span></span>
+                              <span className="break-words">{mergeValueWords(f, (side === "kept" ? data.kept : data.removed)[f], side === "kept" ? data.kept : data.removed)}<span className="sr-only">, {side}</span></span>
                             </label>
                           ))}
                         </fieldset>
