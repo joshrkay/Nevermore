@@ -15,7 +15,7 @@ const renderHome = () =>
     <MemoryRouter initialEntries={["/"]}>
       <Routes>
         <Route path="/" element={<HomeRoute />} />
-        <Route path="/advisor" element={<p>The workspace</p>} />
+        <Route path="/home" element={<p>The workspace</p>} />
       </Routes>
     </MemoryRouter>,
   );

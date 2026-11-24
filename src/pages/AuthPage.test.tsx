@@ -25,6 +25,7 @@ const renderLogin = (state?: Record<string, unknown>) =>
       <Routes>
         <Route path="/login" element={<AuthPage />} />
         <Route path="/advisor" element={<p>Advisor queue</p>} />
+        <Route path="/home" element={<p>Home page</p>} />
         <Route path="/advisor/submissions/:id" element={<p>One submission</p>} />
         <Route path="/start" element={<p>The Chamber</p>} />
         <Route path="/firms/new" element={<p>Sign up your firm form</p>} />
@@ -115,10 +116,10 @@ describe("AuthPage", () => {
     expect(await screen.findByText("One submission")).toBeInTheDocument();
   });
 
-  it("takes an advisor with no remembered page to the queue, not the prospect intake", async () => {
+  it("takes an advisor with no remembered page to Home, not the prospect intake", async () => {
     renderLogin({ audience: "advisor", reason: "signed_out" });
     signInAs("adv@example.com");
-    await waitFor(() => expect(screen.getByText("Advisor queue")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Home page")).toBeInTheDocument());
     expect(screen.queryByText("The Chamber")).not.toBeInTheDocument();
   });
 

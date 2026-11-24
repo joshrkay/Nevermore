@@ -21,7 +21,7 @@ describe("BrokerCallbackPage", () => {
   it("redeems the code once and loads the console afresh", async () => {
     finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
     renderAt("?code=abc");
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/home"));
     expect(finishBrokerSignIn).toHaveBeenCalledTimes(1);
     expect(finishBrokerSignIn).toHaveBeenCalledWith("abc");
   });
@@ -81,7 +81,7 @@ describe("BrokerCallbackPage", () => {
   it("ignores a next that leaves the console", async () => {
     finishBrokerSignIn.mockResolvedValue({ ok: true, mailbox: "connected" });
     renderAt("?code=abc&next=https%3A%2F%2Fevil.example");
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/advisor"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/home"));
   });
 
   it("tells a refusal at the provider in its own words, never the link's", async () => {

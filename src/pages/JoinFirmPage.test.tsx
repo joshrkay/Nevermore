@@ -124,7 +124,7 @@ describe("JoinFirmPage", () => {
     await waitFor(() => expect(api.acceptInvitation).toHaveBeenCalledWith("the-token", "acme-brokers"));
     expect(await screen.findByRole("heading", { name: "You've joined Acme Brokers" })).toBeInTheDocument();
     expect(screen.getByText("You're now an agent of Acme Brokers.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute("href", "/advisor");
+    expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute("href", "/home");
   });
 
   it("says the role in grammatical words", async () => {

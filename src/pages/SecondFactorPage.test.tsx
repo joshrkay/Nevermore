@@ -25,6 +25,7 @@ const renderPage = (state?: Record<string, unknown>) =>
       <Routes>
         <Route path="/advisor/second-factor" element={<SecondFactorPage />} />
         <Route path="/advisor" element={<p>Advisor queue</p>} />
+        <Route path="/home" element={<p>Home page</p>} />
         <Route path="/advisor/held" element={<HeldStub />} />
         <Route path="/login" element={<LoginStub />} />
       </Routes>
@@ -178,7 +179,7 @@ describe("SecondFactorPage", () => {
     renderPage();
     expect(await screen.findByText("We couldn't check your sign-in.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Advisor queue")).toBeInTheDocument();
+    expect(await screen.findByText("Home page")).toBeInTheDocument();
   });
 
   it("sends a signed-out visitor to the advisor sign-in, returning to where they were going", () => {

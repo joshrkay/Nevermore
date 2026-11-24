@@ -1,6 +1,7 @@
-import { BarChart3, Building2, FileText, Mail, Plus, Settings, UserPlus, type LucideIcon } from "lucide-react";
+import { BarChart3, Building2, FileText, Home as HomeIcon, Mail, Plus, Settings, UserPlus, type LucideIcon } from "lucide-react";
+import { HOME_PATH } from "@/data/home";
 
-// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: the sections not built yet (Home) are not listed until the story that builds it (CRM-H1), so the menu has no dead buttons. Leads arrived with CRM-L1.1a.
+// The workspace menu as data (story CRM-S1.1a, D-38). Each epic that builds a section adds its item here: a section not built yet is not listed until the story that builds it, so the menu has no dead buttons (Home arrived with CRM-H1). Leads arrived with CRM-L1.1a.
 
 /** The numbers the menu shows beside an item (story CRM-S1.1c, D-39; open leads, CRM-L1.1a). */
 export type MenuCountKey = "quotes" | "inbox" | "leads";
@@ -12,7 +13,7 @@ export const MENU_COUNT_CAP = 99;
 export const badgeText = (n: number): string | null => (n <= 0 ? null : n > MENU_COUNT_CAP ? `${MENU_COUNT_CAP}+` : String(n));
 
 export interface MenuItem {
-  key: "quotes" | "inbox" | "leads" | "accounts" | "reports" | "settings";
+  key: "home" | "quotes" | "inbox" | "leads" | "accounts" | "reports" | "settings";
   label: string;
   /** Where it opens, path and query, until its own epic ships. */
   to: string;
@@ -61,6 +62,8 @@ export const NEW_QUOTE_PATH = "/new-quote";
 export const NEW_QUOTE_ITEM = { label: "New quote", to: NEW_QUOTE_PATH, icon: Plus } as const;
 
 export const MENU_ITEMS: MenuItem[] = [
+  // Home (CRM-H1): what needs the person, the first page a member opens (D-2201). It has no number of its own.
+  { key: "home", label: "Home", to: HOME_PATH, icon: HomeIcon, countKey: null, countWords: null, isCurrent: (pathname) => pathname === HOME_PATH },
   {
     key: "quotes",
     label: "Quotes",

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { HOME_PATH } from "@/data/home";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
@@ -33,7 +34,7 @@ const SecondFactorPage = () => {
   const [codeError, setCodeError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fromState = (location.state as { from?: { pathname: string; search?: string } } | null)?.from;
-  const from = fromState ? `${fromState.pathname}${fromState.search ?? ""}` : "/advisor";
+  const from = fromState ? `${fromState.pathname}${fromState.search ?? ""}` : HOME_PATH;
   const userId = user?.id;
   const signedIn = Boolean(userId) && !isAnonymous;
 

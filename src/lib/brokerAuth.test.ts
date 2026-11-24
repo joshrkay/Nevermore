@@ -12,8 +12,11 @@ describe("where a broker goes after signing in", () => {
   it("is a page of the advisor console and nothing else", () => {
     expect(brokerNext("/advisor/submissions/abc-123")).toBe("/advisor/submissions/abc-123");
     expect(brokerNext("/advisor")).toBe("/advisor");
+    // Home (CRM-H1, D-2201) is a page of the console too, and where a sign-in for nowhere in particular lands.
+    expect(brokerNext("/home")).toBe("/home");
+    for (const bad of ["/homex", "/home/x", "/home/..", "/home?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/home");
     for (const bad of [null, undefined, "", "/start", "https://evil.example", "//evil.example", "/advisor/../start", "/advisor//x", "/advisorx", "/advisor\\x"]) {
-      expect(brokerNext(bad as string | null), String(bad)).toBe("/advisor");
+      expect(brokerNext(bad as string | null), String(bad)).toBe("/home");
     }
   });
 
@@ -36,32 +39,32 @@ describe("where a broker goes after signing in", () => {
       expect(brokerNext(kept), kept).toBe(kept);
     }
     for (const bad of ["/contacts", "/contacts/a/b", "/contactsx/1", "/leadsx", "/leads/../advisor", "/contacts/1?x=//evil.example"]) {
-      expect(brokerNext(bad), bad).toBe("/advisor");
+      expect(brokerNext(bad), bad).toBe("/home");
     }
   });
 
   // Catches: a broker who connects their mailbox from the place to write on a lead's page (slice 8.5, D-603) landing on the queue instead of back on the lead.
   it("keeps a lead's page", () => {
     for (const kept of ["/leads/5f1c2a9e-0000-4000-8000-000000000004", "/leads/l1?x=1"]) expect(brokerNext(kept), kept).toBe(kept);
-    for (const bad of ["/leads/a/b", "/leads/..", "/leads/l1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+    for (const bad of ["/leads/a/b", "/leads/..", "/leads/l1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/home");
   });
 
   // Catches: a broker who connects their mailbox from Email on an opportunity's page (5.0y, D-650) landing on the queue instead of back on the opportunity with the contact they were writing to.
   it("keeps an opportunity's page, with its query", () => {
     for (const kept of ["/opportunities/5f1c2a9e-0000-4000-8000-000000000005", "/opportunities/o1?email=c1"]) expect(brokerNext(kept), kept).toBe(kept);
-    for (const bad of ["/opportunities", "/opportunities/a/b", "/opportunities/..", "/opportunitiesx/1", "/opportunities/o1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+    for (const bad of ["/opportunities", "/opportunities/a/b", "/opportunities/..", "/opportunitiesx/1", "/opportunities/o1?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/home");
   });
 
   // Catches: a broker who connects their mailbox from Follow up or Send again on a quote's page (CRM-Q3.2, D-650) landing on the queue instead of back on the quote.
   it("keeps a quote's page, by its number", () => {
     for (const kept of ["/quotes/7", "/quotes/7?x=1"]) expect(brokerNext(kept), kept).toBe(kept);
-    for (const bad of ["/quotes", "/quotes/", "/quotes/7/8", "/quotes/..", "/quotesx/7", "/quotes/7?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+    for (const bad of ["/quotes", "/quotes/", "/quotes/7/8", "/quotes/..", "/quotesx/7", "/quotes/7?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/home");
   });
 
   // Catches: a broker who connects their mailbox from the inbox's banner (CRM-E1.4) landing on the queue instead of back in the inbox, with its view.
   it("keeps the inbox, with its query", () => {
     for (const kept of ["/inbox", "/inbox?view=new", "/inbox?view=sent&q=reyes"]) expect(brokerNext(kept), kept).toBe(kept);
-    for (const bad of ["/inboxx", "/inbox/1", "/inbox/../advisor", "/inbox?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/advisor");
+    for (const bad of ["/inboxx", "/inbox/1", "/inbox/../advisor", "/inbox?x=//evil.example"]) expect(brokerNext(bad), bad).toBe("/home");
   });
 
   // Catches: a broker who signs in again for an Accounts export (or on an expired session) landing on the queue with the filters gone (D-223).
@@ -95,7 +98,7 @@ describe("where a broker goes after signing in", () => {
       "/accountsx",
       "/accounts/a b",
     ]) {
-      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/advisor");
+      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/home");
     }
   });
 
@@ -119,7 +122,7 @@ describe("where a broker goes after signing in", () => {
       "javascript:alert(1)",
       "/advisor/activity?x=<script>",
     ]) {
-      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/advisor");
+      expect(brokerNext(bad), JSON.stringify(bad)).toBe("/home");
     }
   });
 

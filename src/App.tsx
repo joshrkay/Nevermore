@@ -36,6 +36,7 @@ const AdvisorSubmissionPage = lazy(() => import("./pages/advisor/AdvisorSubmissi
 const AccountsPage = lazy(() => import("./pages/accounts/AccountsPage"));
 const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
+const HomePage = lazy(() => import("./pages/home/HomePage"));
 const QuotesPage = lazy(() => import("./pages/quotes/QuotesPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
@@ -101,6 +102,8 @@ const AppRoutes = () => (
                 {/* The workspace: one layout route puts the firm guard and the menu around every member page, which keep their
                     /advisor paths (D-37). A page that needs more than membership asks for it inside (as="owner"). */}
                 <Route element={<RequireFirm><WorkspaceShell /></RequireFirm>}>
+                  {/* Home (CRM-H1): the first page a member of a firm opens. The Submissions queue keeps its address. */}
+                  <Route path="/home" element={<HomePage />} />
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
                   <Route path="/inbox" element={<InboxPage />} />
