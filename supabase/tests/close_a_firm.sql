@@ -221,6 +221,8 @@
 \i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 \i supabase/migrations/20261126090000_lines.sql
 \i supabase/migrations/20261127090000_sendable.sql
+\i supabase/migrations/20261128090000_home.sql
+\i supabase/migrations/20261129090000_daily_summary.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -1199,9 +1201,9 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'intake_invitations', 0, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'firm_market_contacts', 1, 'market_requests', 1, 'firm_licences', 1, 'firm_licence_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
-  PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
-    AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
+    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'firm_market_contacts', 1, 'market_requests', 1, 'firm_licences', 1, 'firm_licence_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 8), 'a count per table of what was deleted');
+  PERFORM pg_temp.is(8::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
+    AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice, two mail notices, and the email about the firm''s request for a PEO (BR-3.6)');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address IN ('teamed@mailbox.test', 'agent_a@mailbox.test')), 0::bigint, 'the mailboxes of people whose last firm this was are deleted');
   PERFORM pg_temp.is((SELECT count(*) FROM public.broker_mailboxes WHERE address = 'both@mailbox.test'), 1::bigint, 'the mailbox of a person who belongs to another firm is kept');
@@ -1451,6 +1453,8 @@ DECLARE
   exempt jsonb := jsonb_build_object(
     'admin_answer_market_request', 'a platform admin''s: the answer to a firm''s request for a market',
     'admin_record_licence_check', 'a platform admin''s: that they checked a firm''s licences',
+    'set_my_summary_settings', 'a person''s own settings for the daily summary: not a firm''s data, and theirs whatever state a firm they belong to is in',
+    'note_my_time_zone', 'a person''s own time zone, kept when they have none: not a firm''s data',
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',
     'admin_decide_firm', 'a platform admin''s',
     'admin_discard_peo_draft', 'a platform admin''s',

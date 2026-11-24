@@ -30,6 +30,75 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.home_shows(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 
+-- What needs a person in a firm, one line each (CRM-H1's "Needs you"). For their own ('mine') it goes by what they own and the tasks that are theirs, and
+-- asks nothing of the caller, so the daily summary's job reads the same lines for each member; for a team's or everyone's it goes by the caller's level
+-- rule. The one definition of each kind, for Home and for the summary. Not called through the API.
+CREATE FUNCTION public.home_needs(p_firm_id uuid, p_user_id uuid, p_whose text, p_time_zone text)
+RETURNS TABLE (kind text, record_type text, record_id text, name text, about text, at timestamptz, owner_id uuid)
+LANGUAGE sql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  WITH d AS (
+    SELECT (now() AT TIME ZONE p_time_zone)::date AS today, public.home_days() AS days
+  ), open_opps AS MATERIALIZED (
+    SELECT x.* FROM (
+      SELECT o.id, o.name, o.intake_id, a.name AS account_name, a.owner_id, public.opportunity_stage(o.id) AS stage
+      FROM public.opportunities o JOIN public.accounts a ON a.id = o.account_id
+      WHERE o.firm_id = p_firm_id AND a.firm_id = p_firm_id AND a.archived_at IS NULL
+        AND CASE WHEN p_whose = 'mine' THEN a.owner_id IS NOT DISTINCT FROM p_user_id ELSE public.can_see_firm_record(p_firm_id, a.owner_id) END) x
+    WHERE x.stage NOT IN ('won', 'lost')
+  )
+    -- New mail: one line for a thread, its newest new message (the inbox's own rows, which already go by the level rule).
+    SELECT * FROM (
+      SELECT DISTINCT ON (r.kind, r.thread_id) 'new_mail'::text AS kind, 'inbox'::text AS record_type, r.thread_id AS record_id,
+             COALESCE(r.account_name, r.lead_name, r.peo_name, r.from_name, r.from_address) AS name, r.subject AS about, r.at, r.owner AS owner_id
+      FROM public.inbox_rows(p_firm_id) r
+      -- The inbox's rows go by the caller's own level, so a read for someone else (the daily summary's job) holds no mail: new mail has its own alert.
+      WHERE r.is_new AND p_user_id IS NOT DISTINCT FROM auth.uid() AND (p_whose <> 'mine' OR r.owner IS NOT DISTINCT FROM p_user_id)
+      ORDER BY r.kind, r.thread_id, r.at DESC) m
+    UNION ALL
+    -- An intake certified and sent to nobody yet.
+    SELECT 'intake_certified', 'opportunity', o.id::text, o.account_name, o.name, c.signed_at, o.owner_id
+    FROM open_opps o
+    JOIN LATERAL (SELECT x.signed_at FROM public.chamber_certifications x WHERE x.session_id = o.intake_id AND x.superseded_at IS NULL ORDER BY x.version DESC LIMIT 1) c ON true
+    WHERE NOT EXISTS (SELECT 1 FROM public.quote_requests q WHERE q.session_id = o.intake_id)
+    UNION ALL
+    -- A quote that expires within the days given, today included; one already expired is not expiring.
+    SELECT 'quote_expiring', 'quote', q.id::text, o.account_name, q.peo_name, e.expires_on::timestamp AT TIME ZONE p_time_zone, o.owner_id
+    FROM open_opps o
+    JOIN public.quote_requests q ON q.session_id = o.intake_id AND q.status = 'quoted'
+    JOIN LATERAL (SELECT COALESCE((SELECT x.expires_on FROM public.quotes x WHERE x.quote_request_id = q.id ORDER BY x.id DESC LIMIT 1), q.quote_expires_on) AS expires_on) e ON true
+    CROSS JOIN d
+    WHERE e.expires_on BETWEEN d.today AND d.today + (d.days ->> 'quote_expiring')::integer
+    UNION ALL
+    -- An intake under way with nothing new on it for the days given.
+    SELECT 'intake_quiet', 'opportunity', o.id::text, o.account_name, o.name, s.updated_at, o.owner_id
+    FROM open_opps o JOIN public.chamber_sessions s ON s.id = o.intake_id CROSS JOIN d
+    WHERE o.stage = 'intake_under_way' AND s.updated_at < now() - make_interval(days => (d.days ->> 'intake_quiet')::integer)
+    UNION ALL
+    -- A task due today or overdue: the person's own when they asked for their own, otherwise those on what they may see.
+    SELECT 'task_due', CASE WHEN t.lead_id IS NOT NULL THEN 'lead' ELSE 'account' END, COALESCE(t.lead_id, t.account_id)::text,
+           COALESCE(a.name, l.name), t.title, t.due_on::timestamp AT TIME ZONE p_time_zone, t.assignee_id
+    FROM public.activities t
+    LEFT JOIN public.accounts a ON a.id = t.account_id
+    LEFT JOIN public.leads l ON l.id = t.lead_id
+    CROSS JOIN d
+    WHERE t.firm_id = p_firm_id AND t.kind = 'task' AND t.done_at IS NULL AND t.due_on <= d.today
+      AND (l.id IS NULL OR l.deleted_at IS NULL)
+      AND CASE WHEN p_whose = 'mine' THEN t.assignee_id IS NOT DISTINCT FROM p_user_id ELSE public.can_see_firm_record(p_firm_id, COALESCE(a.owner_id, l.owner_id)) END
+    UNION ALL
+    -- An open lead with no call, note or task for the days given (its last activity, as the leads table has it: D-814).
+    SELECT 'lead_quiet', 'lead', l.id::text, l.name, NULLIF(btrim(l.business), ''), x.last_at, l.owner_id
+    FROM public.leads l
+    JOIN LATERAL (SELECT COALESCE((SELECT max(t.activity_at) FROM public.activities t WHERE t.lead_id = l.id), l.created_at) AS last_at) x ON true
+    CROSS JOIN d
+    WHERE l.firm_id = p_firm_id AND l.status IN ('new', 'working') AND l.deleted_at IS NULL
+      AND CASE WHEN p_whose = 'mine' THEN l.owner_id IS NOT DISTINCT FROM p_user_id ELSE public.can_see_firm_record(p_firm_id, l.owner_id) END
+      AND x.last_at < now() - make_interval(days => (d.days ->> 'lead_quiet')::integer)
+$$;
+REVOKE ALL ON FUNCTION public.home_needs(uuid, uuid, text, text) FROM PUBLIC, anon, authenticated;
+
 -- Home, for a current member of the firm (or a support session reading it). p_whose is 'mine', 'team' (a lead) or 'everyone' (an owner); one the caller
 -- may not ask for is answered as their own, and the answer says which was used and which they may choose. Days are the caller's own, by p_time_zone.
 CREATE FUNCTION public.home_page(p_firm_id uuid, p_whose text DEFAULT 'mine', p_time_zone text DEFAULT 'UTC')
@@ -73,49 +142,7 @@ BEGIN
   ), open_opps AS (
     SELECT * FROM opps WHERE stage NOT IN ('won', 'lost')
   ), lines AS (
-    -- New mail: one line for a thread, its newest new message (the inbox's own rows, which already go by the level rule).
-    SELECT * FROM (
-      SELECT DISTINCT ON (r.kind, r.thread_id) 'new_mail'::text AS kind, 'inbox'::text AS record_type, r.thread_id AS record_id,
-             COALESCE(r.account_name, r.lead_name, r.peo_name, r.from_name, r.from_address) AS name, r.subject AS about, r.at, r.owner AS owner_id
-      FROM public.inbox_rows(firm) r
-      WHERE r.is_new AND (whose <> 'mine' OR r.owner IS NOT DISTINCT FROM me)
-      ORDER BY r.kind, r.thread_id, r.at DESC) m
-    UNION ALL
-    -- An intake certified and sent to nobody yet.
-    SELECT 'intake_certified', 'opportunity', o.id::text, o.account_name, o.name, c.signed_at, o.owner_id
-    FROM open_opps o
-    JOIN LATERAL (SELECT x.signed_at FROM public.chamber_certifications x WHERE x.session_id = o.intake_id AND x.superseded_at IS NULL ORDER BY x.version DESC LIMIT 1) c ON true
-    WHERE NOT EXISTS (SELECT 1 FROM public.quote_requests q WHERE q.session_id = o.intake_id)
-    UNION ALL
-    -- A quote that expires within the days given, today included; one already expired is not expiring.
-    SELECT 'quote_expiring', 'quote', q.id::text, o.account_name, q.peo_name, e.expires_on::timestamp AT TIME ZONE tz, o.owner_id
-    FROM open_opps o
-    JOIN public.quote_requests q ON q.session_id = o.intake_id AND q.status = 'quoted'
-    JOIN LATERAL (SELECT COALESCE((SELECT x.expires_on FROM public.quotes x WHERE x.quote_request_id = q.id ORDER BY x.id DESC LIMIT 1), q.quote_expires_on) AS expires_on) e ON true
-    WHERE e.expires_on BETWEEN today AND today + (days ->> 'quote_expiring')::integer
-    UNION ALL
-    -- An intake under way with nothing new on it for the days given.
-    SELECT 'intake_quiet', 'opportunity', o.id::text, o.account_name, o.name, s.updated_at, o.owner_id
-    FROM open_opps o JOIN public.chamber_sessions s ON s.id = o.intake_id
-    WHERE o.stage = 'intake_under_way' AND s.updated_at < now() - make_interval(days => (days ->> 'intake_quiet')::integer)
-    UNION ALL
-    -- A task due today or overdue: the person's own when they asked for their own, otherwise those on what they may see.
-    SELECT 'task_due', CASE WHEN t.lead_id IS NOT NULL THEN 'lead' ELSE 'account' END, COALESCE(t.lead_id, t.account_id)::text,
-           COALESCE(a.name, l.name), t.title, t.due_on::timestamp AT TIME ZONE tz, t.assignee_id
-    FROM public.activities t
-    LEFT JOIN public.accounts a ON a.id = t.account_id
-    LEFT JOIN public.leads l ON l.id = t.lead_id
-    WHERE t.firm_id = firm AND t.kind = 'task' AND t.done_at IS NULL AND t.due_on <= today
-      AND (l.id IS NULL OR l.deleted_at IS NULL)
-      AND public.can_see_firm_record(firm, COALESCE(a.owner_id, l.owner_id))
-      AND (whose <> 'mine' OR t.assignee_id IS NOT DISTINCT FROM me)
-    UNION ALL
-    -- An open lead with no call, note or task for the days given (its last activity, as the leads table has it: D-814).
-    SELECT 'lead_quiet', 'lead', l.id::text, l.name, NULLIF(btrim(l.business), ''), x.last_at, l.owner_id
-    FROM public.leads l
-    JOIN LATERAL (SELECT COALESCE((SELECT max(t.activity_at) FROM public.activities t WHERE t.lead_id = l.id), l.created_at) AS last_at) x ON true
-    WHERE l.firm_id = firm AND l.status IN ('new', 'working') AND l.deleted_at IS NULL AND public.home_shows(firm, l.owner_id, whose)
-      AND x.last_at < now() - make_interval(days => (days ->> 'lead_quiet')::integer)
+    SELECT * FROM public.home_needs(firm, me, whose, tz)
   )
   SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('kind', n.kind, 'record_type', n.record_type, 'record_id', n.record_id, 'name', n.name, 'about', n.about,
                                                        'at', n.at, 'owner', public.crm_person_name(n.owner_id)) ORDER BY n.at DESC, n.kind, n.record_id)

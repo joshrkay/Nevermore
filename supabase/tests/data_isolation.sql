@@ -273,6 +273,7 @@
 \i supabase/migrations/20261126090000_lines.sql
 \i supabase/migrations/20261127090000_sendable.sql
 \i supabase/migrations/20261128090000_home.sql
+\i supabase/migrations/20261129090000_daily_summary.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -1075,6 +1076,11 @@ INSERT INTO matrix VALUES
   ('public.market_requests',                            '{}', NULL),
   ('public.firm_licences',                              '{}', NULL),
   ('public.firm_licence_records',                       '{}', NULL);
+-- A person's own settings for the daily summary (BR-3.3, 20261129090000): closed to the API, read and changed through functions about the caller only
+-- (supabase/tests/daily_summary.sql). The first firm's advisor has a row.
+INSERT INTO public.member_settings (user_id, time_zone) VALUES (pg_temp.id('advisor'), 'America/Chicago');
+INSERT INTO matrix VALUES
+  ('public.member_settings',                            '{}', NULL);
 -- ---- CRM-L1.3a: leads (20261121090000) ----
 -- Read by level through can_see_firm_record (supabase/tests/leads.sql), written by nobody through the API. Each firm has two, one owned by its agent and one
 -- with no owner: the first firm's members see both, the second's agent only their own and its owner both. Labels on leads are closed to the API.
@@ -1789,6 +1795,11 @@ INSERT INTO callable VALUES
   ('firm_licence_record(p_firm_id uuid)', 'own', NULL, 'a current member of the firm the call acts for reads that firm''s producer number and licences; 42501 for anyone else'),
   ('admin_firm_licence_record(p_firm_id uuid)', 'admin', 'SELECT public.admin_firm_licence_record(%2$L)', 'a platform admin reads a firm''s producer number and licences before approving it (Q-1.1)'),
   ('admin_record_licence_check(p_firm_id uuid)', 'admin', 'SELECT public.admin_record_licence_check(%2$L)', 'a platform admin records that they checked a firm''s licences; never a firm they belong to');
+-- The daily summary and the request emails (BR-3.3, BR-3.6; 20261129090000): a person's own settings; supabase/tests/daily_summary.sql holds their rules.
+INSERT INTO callable VALUES
+  ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
+  ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
+  ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
 -- Home (CRM-H1, 20261128090000): one read of what needs a member, the counts and the panels; it asks the firm itself and is probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('home_page(p_firm_id uuid, p_whose text, p_time_zone text)', 'own', NULL,
@@ -3956,6 +3967,7 @@ INSERT INTO registry (src, scope, why, names_intakes) VALUES
   ('public.peos', 'platform', 'the PEO list and what each asks for: the same for every firm', false),
   ('storage.objects WHERE bucket_id = ''peo-templates''', 'platform', 'PEO template workbooks: the same for every firm', false),
   ('public.user_roles', 'own', 'a person reads their own roles', false),
+  ('public.member_settings', 'own', 'a person''s own settings for the daily summary (on or off, and their time zone); closed to the API, read and changed through functions about the caller only', false),
   ('public.ai_global_usage', 'closed', 'rate limits', false), ('public.ai_ip_log', 'closed', 'rate limits', false), ('public.ai_request_log', 'closed', 'rate limits', false),
   ('public.broker_mailboxes', 'closed', 'encrypted tokens', false), ('public.email_delivery_events', 'closed', 'delivery log', false),
   ('public.email_suppressions', 'closed', 'do-not-send list', false), ('public.intake_milestones', 'closed', 'read as counts through a function', false),
@@ -4887,6 +4899,13 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('firm_licence_change', 'service_only', 'the shared start of every change to a firm''s licence record: holds the caller to a current owner of a writable firm; no API role can call it'),
   ('firm_licence_record_of', 'service_only', 'a firm''s licence record for the two reads above, which decide who may ask; no API role can call it'),
   ('guard_firm_licensed_for_line', 'trigger', 'refuses the message of a send to a carrier (direction sent, a workers'' comp intake) for a firm with no property and casualty licence on record that has not expired (BR-2.2, ADR 0029)');
+-- The daily summary and the request emails (20261129090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('my_summary_settings', 'own', 'the caller''s own settings for the daily summary; about the caller only'),
+  ('set_my_summary_settings', 'own', 'the caller changes their own settings for the daily summary; about the caller only'),
+  ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
+  ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
+  ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
 -- Home (20261128090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('home_page', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s Home, each line and count by the level rule; refused for anyone else');
