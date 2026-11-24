@@ -200,20 +200,26 @@ them. Anything below marked "after the interviews" is decided then.
 ### 6.3 The agent's day (P1)
 
 **BR-3.1 Home.**
-A member opens on Home, not the Submissions queue. It shows what needs them, each a count that opens its list:
-new mail, intakes certified and not yet sent, quotes expiring within 14 days, intakes with no activity for 7
-days, tasks due or overdue. Under them: renewals in the next 120 days and open opportunities by stage. An owner
-can switch between their own and the firm's. Finishes CRM-H1.
+Home is story CRM-H1 as `docs/BROKER_CRM_STORIES.md` has it, with two numbers changed (founder, 2026-11-24): a quote
+is in **Needs you** when it expires within 14 days (the story said seven), and an intake when nothing is new on it
+for 7 days (the story said ten). Every member of a firm lands on Home, Edgar Allan Advisory's included; the
+Submissions queue stays under Quotes. This replaces D-38's "the firm's address opens the queue".
 
-**BR-3.2 My tasks.**
-One list of every task assigned to the member across leads, accounts, contacts and opportunities, by due date,
-with done, reassign and a link to the record. A lead sees their team's; an owner, the firm's.
+**BR-3.2 Upcoming tasks.**
+A panel on Home, not a page: the open tasks due in the next 14 days for whoever Home is showing (Mine, My team,
+Everyone, as CRM-H1 switches them), by due date, each with done and a link to its record. Decided 2026-11-24: no
+separate "My tasks" page.
 
-**BR-3.3 Reminders.**
-One email each working morning, only when there is something in it: tasks due today or overdue, quotes expiring
-within 7 days, renewals reaching 120, 90 and 60 days, and PEOs sent to more than 5 working days ago with no
-answer. A member can turn it off, or choose which parts. It never holds an intake's answers, a census or a FEIN.
-The numbers of days are proposals.
+**BR-3.3 Daily summary.**
+One email to each member, Monday to Friday, in the morning of the member's own time zone, only when there is
+something in it: what **Needs you** holds for them. Decided 2026-11-24: each member's own time zone (taken from
+their browser, kept on the member, and theirs to change), weekdays only, on for every member with an off switch in
+their profile and a link in the email, and called "Daily summary". It never holds an intake's answers, a census or
+a FEIN.
+
+**BR-3.6 Emails about a request for a PEO or carrier.**
+Decided 2026-11-24: platform admins are emailed when a firm makes a request (BR-1.4), and the person who asked is
+emailed the answer. Neither is built yet.
 
 **BR-3.4 Replying on a thread.**
 An agent writes a free reply on a PEO's or carrier's thread from their connected mailbox, with no new bundle
@@ -407,6 +413,6 @@ be used without it. B comes before any large build so that C to G are built for 
 4. Does the employer's copy show every quote received, or only those the agent chooses (BR-4.2)? Choosing may
    carry a duty to disclose; counsel.
 5. Is the first-year total the product's arithmetic or the agent's entry (BR-4.1)?
-6. Does Home replace the Submissions queue as the first page for every role, Edgar Allan Advisory's included?
+6. ~~Does Home replace the Submissions queue as the first page for every role, Edgar Allan Advisory's included?~~ **Decided 2026-11-24 (founder): yes, for every member of a firm.**
 7. How brokers pay (QP-D7), and whether BR-2.6 asks it.
 8. ~~Whether workers' comp (slice G) comes before or after the workspace slices C to F.~~ **Decided 2026-11-24 (founder): after.** The first firms are PEO brokerages only, so slice G waits and the carrier licence rule (D-2109) affects nobody yet.

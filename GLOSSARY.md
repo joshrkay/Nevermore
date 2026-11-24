@@ -919,6 +919,22 @@ _Avoid_: revert, rollback
 What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
+**Home** (story CRM-H1, BR-3.1):
+The first page a member of a firm opens: what needs them, the firm's counts, renewals coming up, open opportunities by stage and their upcoming tasks. Every firm's members land on it, Edgar Allan Advisory's included; the Submissions queue is reached from Quotes.
+_Avoid_: dashboard (the advisory team's funnel was called that), the queue
+
+**Needs you**:
+Home's list of what a member should act on, newest first: new mail from a PEO or a contact, an intake certified, a quote expiring within 14 days, an intake with nothing new for 7 days, a task due today or overdue, a lead with no activity for 7 days. Not **Needs advisor action**, which is a mark an advisor puts on one submission by hand.
+_Avoid_: notifications, alerts, to-do list
+
+**Upcoming tasks**:
+Home's panel of the open tasks due in the next 14 days, for whoever Home is showing. A task due today or overdue is in **Needs you** as well.
+_Avoid_: My tasks (there is no page of that name)
+
+**Daily summary**:
+The product's own email to one member, Monday to Friday in the morning of that member's own time zone, saying what **Needs you** holds for them. Sent only when there is something in it. Every member gets it unless they turn it off. It names records and never holds an intake's answers, a census or a FEIN.
+_Avoid_: morning summary, digest, reminder (a **Draft reminder** goes to a prospect), alert (an **Advisor Alert** is a new submission)
+
 **Follow-up task**:
 The task a call can add as it is logged, saved in the same step as the call and on the same account, contact and opportunity. Both are saved or neither is. For the person logging it unless another member is chosen.
 
