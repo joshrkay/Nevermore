@@ -274,6 +274,7 @@
 \i supabase/migrations/20261127090000_sendable.sql
 \i supabase/migrations/20261128090000_home.sql
 \i supabase/migrations/20261129090000_daily_summary.sql
+\i supabase/migrations/20261130090000_import.sql
 SET client_min_messages = notice;
 
 -- The list above is every migration: a new one that isn't loaded here would go untested, so the number of
@@ -847,6 +848,9 @@ BEGIN
     INSERT INTO public.market_requests (firm_id, name, line) VALUES (fid, 'Fixture Unlisted PEO', 'peo');
     INSERT INTO public.firm_licences (firm_id, state, line) VALUES (fid, 'TX', 'property_casualty');
     INSERT INTO public.firm_licence_records (firm_id, npn) VALUES (fid, '1234567');
+    -- Import (CRM-X4.1): an import of the firm's, with one row.
+    WITH i AS (INSERT INTO public.imports (firm_id, kind, file_name, total_rows) VALUES (fid, 'leads', 'fixture.csv', 1) RETURNING id, firm_id)
+    INSERT INTO public.import_rows (import_id, firm_id, row_number, outcome, reason) SELECT i.id, i.firm_id, 2, 'failed', 'Fixture reason' FROM i;
     -- CRM-S1.2b: the owner's last opened record.
     INSERT INTO public.recent_records (firm_id, user_id, slot, kind, record_id) VALUES (fid, agent, 0, 'account', acc1::text);
     -- CRM-L1.3a: two leads, one owned by the firm's agent and one with none, a note on the owned one, and a label on it.
@@ -1079,6 +1083,10 @@ INSERT INTO matrix VALUES
 -- A person's own settings for the daily summary (BR-3.3, 20261129090000): closed to the API, read and changed through functions about the caller only
 -- (supabase/tests/daily_summary.sql). The first firm's advisor has a row.
 INSERT INTO public.member_settings (user_id, time_zone) VALUES (pg_temp.id('advisor'), 'America/Chicago');
+-- Import (CRM-X4.1, 20261130090000): closed to the API; an owner or a lead reads the firm's through imports_list and import_problems (supabase/tests/import.sql).
+INSERT INTO matrix VALUES
+  ('public.imports',                                    '{}', NULL),
+  ('public.import_rows',                                '{}', NULL);
 INSERT INTO matrix VALUES
   ('public.member_settings',                            '{}', NULL);
 -- ---- CRM-L1.3a: leads (20261121090000) ----
@@ -1800,6 +1808,14 @@ INSERT INTO callable VALUES
   ('my_summary_settings()', 'own', NULL, 'whether the caller gets the daily summary and the time zone their morning is in; about the caller only; a signed-out caller or a guest is refused'),
   ('set_my_summary_settings(p_daily_summary boolean, p_time_zone text)', 'own', NULL, 'the caller turns their own daily summary on or off and chooses their own time zone; about the caller only'),
   ('note_my_time_zone(p_time_zone text)', 'own', NULL, 'keeps the time zone the caller''s browser reports when they have none yet; about the caller only, and does nothing for anyone else');
+-- Import (CRM-X4.1, 20261130090000): each asks the firm itself, and that the caller is an owner or a lead of it; probed with two firms below (4e).
+INSERT INTO callable VALUES
+  ('import_preview(p_firm_id uuid, p_kind text, p_rows jsonb)', 'own', NULL, 'an owner or a lead of the firm the call acts for reads what a set of rows would make, and nothing is made; 42501 for anyone else'),
+  ('start_import(p_firm_id uuid, p_kind text, p_file_name text, p_total_rows integer)', 'own', NULL, 'an owner or a lead of the firm the call acts for starts an import; 42501 for anyone else, PT423 for a closing firm or a support session'),
+  ('import_rows(p_firm_id uuid, p_import_id uuid, p_rows jsonb)', 'own', NULL, 'the person who started an import of their firm sends some of its rows; PT404 for another person''s or another firm''s import'),
+  ('imports_list(p_firm_id uuid)', 'own', NULL, 'an owner reads every import of the firm the call acts for, a lead their own; 42501 for anyone else'),
+  ('import_problems(p_firm_id uuid, p_import_id uuid)', 'own', NULL, 'the rows of an import that made nothing, for an owner of its firm or the lead who ran it; PT404 for any other import'),
+  ('undo_import(p_firm_id uuid, p_import_id uuid)', 'own', NULL, 'an owner of the firm, or the lead who ran it, undoes an import once within 30 days; PT404 for any other import');
 -- Home (CRM-H1, 20261128090000): one read of what needs a member, the counts and the panels; it asks the firm itself and is probed with two firms below (4e).
 INSERT INTO callable VALUES
   ('home_page(p_firm_id uuid, p_whose text, p_time_zone text)', 'own', NULL,
@@ -2746,6 +2762,20 @@ INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
   ('remove_firm_market_contact', 'advisor', 'by_id', $$SELECT 'removed' || public.remove_firm_market_contact({firm}, {fmc})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$');
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
   ('remove_firm_licence', 'admin', 'by_id', $$SELECT 'removed' || public.remove_firm_licence({firm}, {lic})::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:removed$', ARRAY['admin', 'owner_b']);
+
+-- ---- Import (CRM-X4.1, 20261130090000): an owner's (or a lead's) to run. {imp} is each firm's fixture import, which no caller started: an owner reads its
+-- problems, and nobody adds rows to it or (probed last) undoes another firm's.
+INSERT INTO fprobe_ids
+SELECT CASE i.firm_id WHEN pg_temp.id('firm_a') THEN 'a' ELSE 'b' END, 'imp', i.id::text FROM public.imports i WHERE i.file_name = 'fixture.csv';
+INSERT INTO fprobe (fn, who, shape, call, refused, member_ok, positive) VALUES
+  ('import_preview', 'admin', 'by_id', $$SELECT public.import_preview({firm}, 'leads', '[{"_row": 2, "name": "Probe"}]') ->> 'create'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:1$', ARRAY['admin', 'owner_b']),
+  ('start_import', 'admin', 'by_id', $$SELECT length(public.start_import({firm}, 'leads', 'probe.csv', 1)::text)::text$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:36$', ARRAY['admin', 'owner_b']),
+  ('import_rows', 'admin', 'by_id',
+   $$SELECT public.import_rows({firm}, public.start_import({firm}, 'leads', 'probe.csv', 1), jsonb_build_array(jsonb_build_object('_row', 2, 'name', 'Probe ' || gen_random_uuid()))) ->> 'created'$$,
+   ARRAY['42501', 'PT404', 'P0002'], '^ok:1$', ARRAY['admin', 'owner_b']),
+  ('imports_list', 'admin', 'by_id', $$SELECT jsonb_typeof(public.imports_list({firm}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$', ARRAY['admin', 'owner_b']),
+  ('import_problems', 'admin', 'by_id', $$SELECT jsonb_typeof(public.import_problems({firm}, {imp}))$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:array$', ARRAY['admin', 'owner_b']),
+  ('undo_import', 'admin', 'by_id', $$SELECT public.undo_import({firm}, {imp}) ->> 'removed'$$, ARRAY['42501', 'PT404', 'P0002'], '^ok:0$', ARRAY['admin', 'owner_b']);
 
 -- ---- Home (CRM-H1, 20261128090000): every member of the firm reads its Home, each by what they may see.
 INSERT INTO fprobe (fn, who, shape, call, refused, member_ok) VALUES
@@ -3852,6 +3882,14 @@ INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.firm_licence_records', 'firm', 'its own firm_id, one row for a firm; closed to the API, read through firm_licence_record',
    $m$INSERT INTO public.firm_licence_records (firm_id) VALUES ({firm}) ON CONFLICT (firm_id) DO UPDATE SET changed_at = now() RETURNING ctid::text$m$, false,
    'firm_id = {firm}');
+-- Import (20261130090000): a firm's imports and what each row made.
+INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
+  ('public.imports', 'firm', 'its own firm_id; closed to the API, read through imports_list by an owner or a lead of the firm',
+   $m$INSERT INTO public.imports (firm_id, kind, file_name, total_rows) VALUES ({firm}, 'leads', 'probe-{tag}.csv', 1) RETURNING ctid::text$m$, false,
+   'firm_id = {firm}'),
+  ('public.import_rows', 'firm', 'its own firm_id and an import of that firm; closed to the API, read through import_problems',
+   $m$INSERT INTO public.import_rows (import_id, firm_id, row_number, outcome) SELECT i.id, i.firm_id, COALESCE((SELECT max(w.row_number) FROM public.import_rows w WHERE w.import_id = i.id), 0) + 1, 'failed' FROM public.imports i WHERE i.firm_id = {firm} ORDER BY i.created_at, i.id LIMIT 1 RETURNING ctid::text$m$, false,
+   'firm_id = {firm}');
 INSERT INTO registry (src, scope, why, make_row, member_reads, move_to) VALUES
   ('public.leads', 'firm', 'its own firm_id; read by level, written by no API role',
    $m$INSERT INTO public.leads (firm_id, owner_id, name, source) VALUES ({firm}, CASE WHEN {firm} = pg_temp.id('firm_a') THEN pg_temp.id('advisor') ELSE pg_temp.id('agent_b') END, 'Probe {tag}', 'added_by_hand') RETURNING ctid::text$m$, false,
@@ -4906,6 +4944,14 @@ INSERT INTO fn_class (fn, class, why) VALUES
   ('note_my_time_zone', 'own', 'keeps the caller''s own time zone when they have none; about the caller only'),
   ('queue_daily_summaries', 'service_only', 'the quarter-hourly job: queues each current member''s own daily summary, of what they own in each firm; only the service role can call it'),
   ('queue_market_request_emails', 'trigger', 'queues the email to platform admins when a firm asks for a PEO or carrier, and the email to the asker when it is answered');
+-- Import (20261130090000).
+INSERT INTO fn_class (fn, class, why) VALUES
+  ('import_preview', 'firm_scoped', 'an owner or a lead of the firm the call acts for reads what rows would make; nothing is made; refused for anyone else'),
+  ('start_import', 'firm_scoped', 'an owner or a lead of the firm the call acts for starts an import of that firm; refused for anyone else'),
+  ('import_rows', 'firm_scoped', 'the person who started an import of the firm the call acts for sends its rows; PT404 for another firm''s import as for one that is not there'),
+  ('imports_list', 'firm_scoped', 'an owner or a lead of the firm the call acts for reads that firm''s imports; refused for anyone else'),
+  ('import_problems', 'firm_scoped', 'an owner or the lead who ran it reads an import of the firm the call acts for; PT404 for another firm''s'),
+  ('undo_import', 'firm_scoped', 'an owner or the lead who ran it undoes an import of the firm the call acts for; PT404 for another firm''s');
 -- Home (20261128090000).
 INSERT INTO fn_class (fn, class, why) VALUES
   ('home_page', 'firm_scoped', 'a current member of the firm the call acts for reads that firm''s Home, each line and count by the level rule; refused for anyone else');
