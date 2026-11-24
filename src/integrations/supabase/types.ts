@@ -1373,6 +1373,12 @@ export type Database = {
         Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
         Returns: Json
       }
+      // Roles, teams and visibility (20261201090000, CRM-X1.1): an owner changes a member, keeps teams, and sets who sees what.
+      change_member: { Args: { p_firm_id: string; p_user_id: string; p_role: string; p_team_id: string | null }; Returns: undefined }
+      save_team: { Args: { p_firm_id: string; p_team_id: string | null; p_name: string; p_parent_team_id: string | null }; Returns: string }
+      delete_team: { Args: { p_firm_id: string; p_team_id: string }; Returns: undefined }
+      set_firm_visibility: { Args: { p_firm_id: string; p_visibility: string }; Returns: undefined }
+      firm_teams_page: { Args: { p_firm_id: string }; Returns: Json }
       // Import (20261130090000, CRM-X4.1): a review that makes nothing, an import in requests of rows, the firm's imports, one's problems, and undoing one.
       import_preview: { Args: { p_firm_id: string; p_kind: string; p_rows: Json }; Returns: Json }
       start_import: { Args: { p_firm_id: string; p_kind: string; p_file_name: string | null; p_total_rows: number }; Returns: string }

@@ -1161,3 +1161,9 @@ Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:
 7. `e2e/import.spec.ts`, the whole journey in a browser against the real functions. Red at the matching step: `getByLabel('Field for # of Employees')` expected `employees`, received `""`: a real gap, a common header not recognised. Green: more spellings of that column (and the unit case that had pinned "# of Employees" as unmatched now expects it matched). Then passed: matched, reviewed (nothing made), imported with the contact and renewal, the same file again found both already here, undone.
 
 Not yet run for this part: a mutation run of `import.sql`, and the full gate (run with the rest of slice E).
+
+## Roles, teams and visibility (CRM-X1.1, BR-5.3): roles_teams_visibility.sql, 20261201090000_roles_teams_visibility.sql
+
+1. `supabase/tests/roles_teams_visibility.sql`, 7 cases, before the migration. First run: case 1 (teams) passed; case 2 red, `which is what they now are gave agent/no team, expected lead/East`. Real: the change stamped the old membership's end and the new one's start with the wall clock, and `membership_is_current` goes by the transaction's time, so inside the changing transaction the old membership still read as current and the new one as not begun. Green: the transaction's time, as `end_membership_now` uses. Then all 7 passed. Case 3 is the first test of "My team": a lead reads, through Home, the lead of an agent in a team inside their own, and stops reading it when the agent is taken out.
+2. `data_isolation.sql` and `close_a_firm.sql` passed with the five functions listed, classed and probed, and the four writes among those a closing firm refuses.
+3. `RolesAndTeams.test.tsx` (9 cases), written with the component; green on first run. `AdvisorMembersPage.test.tsx` given a quiet stand-in for the new section's read; no assertion changed.

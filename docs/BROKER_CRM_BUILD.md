@@ -1749,3 +1749,19 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2310 | **No field of an import can hold a tax ID or anything about an employee** (the workspace PRD's rule); a test holds the field list to it. |
 | D-2311 | **A new firm's Home offers Import beside New quote** to an owner or a lead (CRM-H1's "Nothing yet"), now that it exists (D-2208). |
 | D-2319 | **Not built.** Updating a matched record (D-2302); matching a column to a new custom field (custom fields are not built); a file other than CSV (a spreadsheet is saved as CSV first); states of operation, labels and a lead's status as import fields; progress that survives leaving the page (what was imported stays, but the rest of the file is not sent). |
+
+## Roles, teams and visibility
+
+`docs/BROKER_READINESS_PRD.md` slice E, part two: story CRM-X1.1's "an owner changes a member's role or team, creates a team ... and puts a team inside another", with the visibility setting (BR-5.3). Migration `20261201090000_roles_teams_visibility.sql`, SQL test `supabase/tests/roles_teams_visibility.sql` (7 cases), `src/lib/teamsApi.ts`, `src/components/advisor/RolesAndTeams.tsx` on the Members page.
+
+| # | Decision |
+|---|---|
+| D-2320 | **No table is added.** `firm_teams`, a membership's `team_id` and `firms.visibility` were there, and the level rule already goes by them (`can_see_firm_record`). What was missing was any way to change them after a person joined. |
+| D-2321 | **A role or team change ends one membership and begins another at the same moment** (`change_member`), never an edit: a membership is never changed (D-33), so who could see a record on a given day can still be answered. The firm's record gains the ending and the beginning, as for any membership; there is no "role changed" kind. |
+| D-2322 | **The change does not disconnect the person's mailbox.** Ending a person's last membership drops their mailbox; a role change ends it for an instant. `drop_mailbox_when_membership_ends` (restated, every line kept) leaves the mailbox alone while a setting only `change_member` makes is on. |
+| D-2323 | **The firm keeps an owner.** Changing the only owner to anything else is refused in words ("Make someone else an owner first"), by the existing rule (`keep_firm_owner`). The same rule also refuses changing the only owner's team, since that too ends their one owner membership: an owner sees everything, so a team means nothing for them. |
+| D-2324 | **A team has a name, used once in the firm whatever its capitals, and may sit in another.** A team can't sit under itself or a team inside it (the existing trigger, said in words). `lead_user_id` on a team is not set from the screen: who leads a team is whoever has the Lead role in it, which is what the level rule reads. |
+| D-2325 | **A team anyone has belonged to is never deleted**: an ended membership still says which team the person was in and is never changed. Such a team is renamed or emptied. One that holds another team is not deleted either. The page offers Delete only where it would work. |
+| D-2326 | **Who sees what is one setting an owner changes** (`set_firm_visibility`): by level, or everyone sees everything. It takes effect at once, for every read. |
+| D-2327 | **A support session reads the section and is offered no control** (ADR 0024); every write asks `assert_firm_writable`. |
+| D-2339 | **Not built.** The members table's "how many accounts they own" and "invited" rows (invitations have their own page); reassigning a removed member's records in bulk from here (the accounts and leads tables' bulk change of owner does it); a team's named lead. |

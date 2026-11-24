@@ -385,7 +385,7 @@ and an answer on protected health information. Do none of it until two lines are
 | B. Checked | Five brokers and two competitors' demos are written up; this document is revised | A, BR-2.6 |
 | C. The day | Home, upcoming tasks, the daily summary, a new firm's Home | B. **Built** (2026-11-24), ahead of B at the founder's choice |
 | D. The win | The complete comparison, the employer's copy, the firm's logo | B, BR-2.3 |
-| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built so far:** import (BR-5.1) |
+| E. Moving in | Import, roles and teams, leads caught up, templates, a free reply | C. **Built so far:** import (BR-5.1); roles, teams and visibility (BR-5.3) |
 | F. The owner | Five reports | C, E |
 | G. Workers' comp | Its own intake, loss runs and carrier quotes read, its renewal | B, BR-1.2 |
 
