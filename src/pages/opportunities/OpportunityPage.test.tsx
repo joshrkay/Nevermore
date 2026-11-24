@@ -1940,7 +1940,8 @@ describe("OpportunityPage: the close dialog's small things (P3)", () => {
     expect(d.getByLabelText("Start date")).toHaveValue("2027-01-01");
     await act(async () => { arrive({ ...noOutcome, quotes: { 12: { closeReason: null, proposedStart: "2027-01-15" } } }); });
     await waitFor(() => expect(d.getByLabelText("Start date")).toHaveValue("2027-01-15"));
-    expect(d.getByLabelText("Renewal date")).toHaveValue("2028-01-15");
+    // The renewal date follows the start date in a later render: waited for too, or a slow run reads it between the two (seen in CI: 2028-01-01).
+    await waitFor(() => expect(d.getByLabelText("Renewal date")).toHaveValue("2028-01-15"));
   });
 
   // Catches: the late default overwriting a start the person had already typed.
