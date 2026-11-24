@@ -8,6 +8,7 @@ import { STAGE_LABELS } from "@/data/accountPage";
 import { kindLabel, type RenewalKind } from "@/data/renewals";
 import { daysAwayWords, HOME_COUNTS, needKindWords, needWhenWords, recordPath, sendBlockWords, WHOSE_LABELS, type Home, type HomeWhose } from "@/data/home";
 import { browserTimeZone, loadHome } from "@/lib/homeApi";
+import { noteMyTimeZone } from "@/lib/summaryApi";
 
 type Load = { kind: "loading" } | { kind: "error"; error: Error } | { kind: "ready"; home: Home };
 
@@ -44,6 +45,11 @@ const HomePage = () => {
     );
     return () => { cancelled = true; };
   }, [firmId, whose, attempt]);
+
+  // The daily summary goes by the person's own morning (BR-3.3): the zone this browser is in is kept for a person who has none yet.
+  useEffect(() => {
+    if (firmId) void noteMyTimeZone(browserTimeZone());
+  }, [firmId]);
 
   const home = load.kind === "ready" ? load.home : null;
   const block = home ? sendBlockWords(home.blocksSending) : null;

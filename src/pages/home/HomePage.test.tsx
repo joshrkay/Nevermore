@@ -9,6 +9,8 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { email: "ada@exampl
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const loadHome = vi.fn();
 vi.mock("@/lib/homeApi", () => ({ loadHome: (...a: unknown[]) => loadHome(...a), browserTimeZone: () => "America/Chicago" }));
+const noteMyTimeZone = vi.fn();
+vi.mock("@/lib/summaryApi", () => ({ noteMyTimeZone: (...a: unknown[]) => noteMyTimeZone(...a) }));
 
 const { WorkspaceContext } = await import("@/components/workspace/workspaceContext");
 const { default: HomePage } = await import("./HomePage");
@@ -24,7 +26,7 @@ const workspace: Workspace = {
 };
 const show = () => render(<MemoryRouter><WorkspaceContext.Provider value={workspace}><HomePage /></WorkspaceContext.Provider></MemoryRouter>);
 
-beforeEach(() => loadHome.mockReset());
+beforeEach(() => { loadHome.mockReset(); noteMyTimeZone.mockReset(); });
 
 describe("Home", () => {
   it("asks for the person's own work first, in their own time zone", async () => {
@@ -32,6 +34,9 @@ describe("Home", () => {
     show();
     await screen.findByRole("heading", { name: "Home" });
     expect(loadHome).toHaveBeenCalledWith("f1", "mine", "America/Chicago");
+    // BR-3.3: the browser's zone is reported once, for the daily summary to go by.
+    expect(noteMyTimeZone).toHaveBeenCalledTimes(1);
+    expect(noteMyTimeZone).toHaveBeenCalledWith("America/Chicago");
   });
 
   // Break caught: a count under the wrong label, or a box that opens nothing.

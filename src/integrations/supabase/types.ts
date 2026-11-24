@@ -1373,6 +1373,10 @@ export type Database = {
         Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
         Returns: Json
       }
+      // The daily summary (20261129090000, BR-3.3): a person's own settings for it, and the time zone their browser reports.
+      my_summary_settings: { Args: Record<PropertyKey, never>; Returns: Json }
+      set_my_summary_settings: { Args: { p_daily_summary: boolean; p_time_zone: string }; Returns: Json }
+      note_my_time_zone: { Args: { p_time_zone: string }; Returns: undefined }
       // Home (20261128090000, CRM-H1): what needs a member, the counts and the panels, in one read.
       home_page: { Args: { p_firm_id: string; p_whose?: string; p_time_zone?: string }; Returns: Json }
       // Sendable (20261127090000; BR-1.3, BR-1.4, BR-2.2): a firm's own contacts at a PEO or carrier, its requests for one that isn't listed and a platform

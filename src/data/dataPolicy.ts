@@ -491,6 +491,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "Nobody can change or delete an entry, an admin included. Deleting a record removes its history in the same step, and closing a firm (CRM-P1.7) deletes the firm's histories with its other data. A firm reads it through one function, as a member of the record's firm; who at Nevermore acted reads as \"Nevermore\", with no name, email or id (D-33).",
   },
   {
+    id: "member_settings",
+    label: "A person's settings for the daily summary",
+    sensitivity: "internal",
+    examples: "Whether a person gets the daily summary, and the time zone their morning is in (first taken from their browser, then theirs to change). One row for a person, whatever firms they belong to. The summary itself is an email that names the records needing them (an account, a lead, a task's title, a PEO), queued in the outbox with the other emails; it never holds an intake's answers, a census or a FEIN.",
+    stored: { tables: ["member_settings"], buckets: [], elsewhere: [] },
+    retention: "Kept while the person has an account.",
+    deletion: "Deleted with the person's account. A person turns the summary off, or changes the time zone, in Settings.",
+  },
+  {
     id: "firm_markets_and_licences",
     label: "A firm's contacts at PEOs and carriers, its requests for one, and its licences on record",
     sensitivity: "confidential",

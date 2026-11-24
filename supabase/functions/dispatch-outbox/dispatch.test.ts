@@ -956,8 +956,8 @@ describe("log routing", () => {
 
 describe("sendableKinds", () => {
   it("lists the kinds whose configuration is complete", () => {
-    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder", "firm_decision"]);
-    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting", "member_left", "firm_closing", "export_alert"]);
+    expect(sendableKinds(config)).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting", "market_request", "member_left", "firm_closing", "export_alert", "prospect_confirmation", "information_request", "draft_expiry_reminder", "firm_decision", "market_answer", "daily_summary"]);
+    expect(sendableKinds(readDispatchConfig((n) => ({ ...env, SUPPORT_EMAIL: "" })[n]))).toEqual(["advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting", "market_request", "member_left", "firm_closing", "export_alert"]);
     // The emails that link to the intake need the app's address; the confirmation and the firm's own notices (no link) don't.
     expect(sendableKinds(readDispatchConfig((n) => ({ ...env, APP_BASE_URL: "" })[n]))).toEqual(["member_left", "firm_closing", "export_alert", "prospect_confirmation"]);
     expect(sendableKinds(readDispatchConfig(() => undefined))).toEqual([]);
@@ -1188,6 +1188,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       ["peo_mail_arrived", "EMAIL_FROM is not set to a valid sender address"],
       ["lead_from_link", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_waiting", "EMAIL_FROM is not set to a valid sender address"],
+      ["market_request", "EMAIL_FROM is not set to a valid sender address"],
       ["member_left", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_closing", "EMAIL_FROM is not set to a valid sender address"],
       ["export_alert", "EMAIL_FROM is not set to a valid sender address"],
@@ -1195,6 +1196,8 @@ describe("telling a blocked kind's events why they are waiting", () => {
       ["information_request", "EMAIL_FROM is not set to a valid sender address"],
       ["draft_expiry_reminder", "EMAIL_FROM is not set to a valid sender address"],
       ["firm_decision", "EMAIL_FROM is not set to a valid sender address"],
+      ["market_answer", "EMAIL_FROM is not set to a valid sender address"],
+      ["daily_summary", "EMAIL_FROM is not set to a valid sender address"],
     ]);
     // Who an advisor alert goes to is the intake's firm's members, so the platform list is not a setting it waits for.
     expect(blockedKinds(configFrom({ ...env, ADVISORY_NOTIFY_EMAIL: "" }), null)).toEqual([]);
@@ -1207,10 +1210,13 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "lead_from_link", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "firm_waiting", problem: "APP_BASE_URL is not set to an https URL" },
+      { kind: "market_request", problem: "APP_BASE_URL is not set to an https URL" },
       { kind: "prospect_confirmation", problem: "SUPPORT_EMAIL is not set to a valid address" },
       { kind: "information_request", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "draft_expiry_reminder", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
       { kind: "firm_decision", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
+      { kind: "market_answer", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
+      { kind: "daily_summary", problem: "SUPPORT_EMAIL is not set to a valid address; APP_BASE_URL is not set to an https URL" },
     ]);
   });
 
@@ -1220,6 +1226,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "peo_mail_arrived", problem: "RESEND_API_KEY is not set" },
       { kind: "lead_from_link", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_waiting", problem: "RESEND_API_KEY is not set" },
+      { kind: "market_request", problem: "RESEND_API_KEY is not set" },
       { kind: "member_left", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_closing", problem: "RESEND_API_KEY is not set" },
       { kind: "export_alert", problem: "RESEND_API_KEY is not set" },
@@ -1227,8 +1234,10 @@ describe("telling a blocked kind's events why they are waiting", () => {
       { kind: "information_request", problem: "RESEND_API_KEY is not set" },
       { kind: "draft_expiry_reminder", problem: "RESEND_API_KEY is not set" },
       { kind: "firm_decision", problem: "RESEND_API_KEY is not set" },
+      { kind: "market_answer", problem: "RESEND_API_KEY is not set" },
+      { kind: "daily_summary", problem: "RESEND_API_KEY is not set" },
     ]);
-    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[7].problem)
+    expect(blockedKinds(configFrom({ ...env, SUPPORT_EMAIL: "" }), "RESEND_API_KEY is not set")[8].problem)
       .toBe("RESEND_API_KEY is not set; SUPPORT_EMAIL is not set to a valid address");
   });
 
@@ -1244,7 +1253,7 @@ describe("telling a blocked kind's events why they are waiting", () => {
       if (kind === "advisor_notification") throw { code: "PGRST202", message: "function not found, row jo@acme.example" };
     });
     await noteBlockedKinds(blockedKinds(config, "RESEND_API_KEY is not set"), note, (l) => logs.push(l));
-    expect(note).toHaveBeenCalledTimes(11);
+    expect(note).toHaveBeenCalledTimes(14);
     expect(note).toHaveBeenCalledWith("prospect_confirmation", "RESEND_API_KEY is not set");
     expect(note).toHaveBeenCalledWith("information_request", "RESEND_API_KEY is not set");
     expect(logs).toEqual(["OUTBOX_NOTE_ERROR: kind=advisor_notification PGRST202"]);
@@ -2099,5 +2108,156 @@ describe("the decision email's settings", () => {
     expect(sent).toHaveLength(0);
     expect(summary.dead).toBe(1);
     expect(deps.fail).toHaveBeenCalledWith("evt-decision", "invalid_payload", null, 1, false);
+  });
+});
+
+// The two emails about a request for a PEO or carrier, and the daily summary (docs/BROKER_READINESS_PRD.md BR-3.3, BR-3.6; 20261129090000_daily_summary.sql).
+const marketRequestRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-market-request", kind: "market_request", session_id: null, firm_id: FIRM, attempts: 1, pending_send: null,
+  payload: { firm_name: "Acme Brokers", market_name: "Summit PEO", line: "peo" },
+  ...over,
+});
+const marketAnswerRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-market-answer", kind: "market_answer", session_id: null, firm_id: FIRM, attempts: 1, pending_send: null,
+  payload: { recipient_email: "gus@acme.example", firm_name: "Acme Brokers", address: "acme-brokers", market_name: "Summit PEO", line: "peo", listed: true, answer: "Listed today." },
+  ...over,
+});
+const summaryRow = (over: Partial<OutboxRow> = {}): OutboxRow => ({
+  id: "evt-summary", kind: "daily_summary", session_id: null, firm_id: FIRM, attempts: 1, pending_send: null,
+  payload: {
+    recipient_email: "gus@acme.example", firm_name: "Acme Brokers", address: "acme-brokers", day: "2026-11-24", time_zone: "America/Chicago", total: 3,
+    lines: [
+      { kind: "quote_expiring", record_type: "quote", record_id: "17", name: "Reyes Bakery", about: "Harbor PEO", at: "2026-12-04T06:00:00+00:00" },
+      { kind: "task_due", record_type: "account", record_id: "a2", name: "Gus Garage", about: "Call the garage", at: "2026-11-22T06:00:00+00:00" },
+    ],
+  },
+  ...over,
+});
+
+describe("dispatching the email about a firm's request for a PEO or carrier", () => {
+  // Catches: the request reaches the firm's own people or nobody, or its link does not open the page where it is answered.
+  it("tells every platform admin who asked and for what, with a link to the PEOs page", async () => {
+    const adminRecipients = vi.fn(async () => ["admin@platform.example"]);
+    const { deps, sent } = harness({ adminRecipients });
+    const summary = await dispatchEvents([marketRequestRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(adminRecipients).toHaveBeenCalledTimes(1);
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+    const { message } = sent[0];
+    expect(message.to).toEqual(["admin@platform.example"]);
+    expect(message.subject).toBe("Acme Brokers asked for Summit PEO");
+    expect(message.text).toContain("Acme Brokers asked for a PEO that isn't listed: Summit PEO.");
+    expect(message.text).toContain("https://app.example.com/advisor/peos");
+  });
+
+  it("calls a workers' comp request a carrier's, and one with no line a PEO's", async () => {
+    const { deps, sent } = harness({ adminRecipients: vi.fn(async () => ["admin@platform.example"]) });
+    await dispatchEvents([marketRequestRow({ payload: { firm_name: "Acme Brokers", market_name: "Granite Ridge Mutual", line: "workers_comp" } }), marketRequestRow({ id: "evt-2", payload: { firm_name: "Acme Brokers", market_name: "Old PEO" } })], deps);
+    expect(sent[0].message.text).toContain("asked for a workers' comp carrier that isn't listed: Granite Ridge Mutual.");
+    expect(sent[1].message.text).toContain("asked for a PEO that isn't listed: Old PEO.");
+  });
+
+  it("is dead at once when it names no firm or no PEO, and waits when there is no admin to tell", async () => {
+    const bad = harness({ adminRecipients: vi.fn(async () => ["admin@platform.example"]) });
+    await dispatchEvents([marketRequestRow({ payload: { firm_name: "Acme Brokers" } })], bad.deps);
+    expect(bad.sent).toHaveLength(0);
+    expect(bad.deps.fail).toHaveBeenCalledWith("evt-market-request", "invalid_payload", null, 1, false);
+    const none = harness({ adminRecipients: vi.fn(async () => []) });
+    await dispatchEvents([marketRequestRow()], none.deps);
+    expect(none.sent).toHaveLength(0);
+    expect(none.deps.fail).toHaveBeenCalledWith("evt-market-request", "no_recipients", expect.anything(), 1, false);
+  });
+});
+
+describe("dispatching the answer to a request for a PEO or carrier", () => {
+  // Catches: the answer mailed to the admins or the firm's owners, or its link opening another firm's address.
+  it("tells the person who asked that it is listed, with a link to their own firm's PEOs page", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([marketAnswerRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(deps.adminRecipients).not.toHaveBeenCalled();
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+    const { message } = sent[0];
+    expect(message.to).toEqual(["gus@acme.example"]);
+    expect(message.replyTo).toBe("support@example.com");
+    expect(message.subject).toBe("Summit PEO is now listed on Nevermore");
+    expect(message.text).toContain("What we noted: Listed today.");
+    expect(message.text).toContain("https://acme-brokers.app.example.com/advisor/peos");
+  });
+
+  it("says it was not added, with the reason given", async () => {
+    const { deps, sent } = harness();
+    await dispatchEvents([marketAnswerRow({ payload: { recipient_email: "gus@acme.example", firm_name: "Acme Brokers", address: "acme-brokers", market_name: "Summit PEO", line: "peo", listed: false, answer: "It left the market." } })], deps);
+    expect(sent[0].message.subject).toBe("Your request for Summit PEO on Nevermore");
+    expect(sent[0].message.text).toContain("Summit PEO was not added to the list.");
+    expect(sent[0].message.text).toContain("What we noted: It left the market.");
+  });
+
+  it("is dead at once without an address to send to or without which way it went", async () => {
+    for (const payload of [{ firm_name: "Acme Brokers", address: "acme-brokers", market_name: "Summit PEO", listed: true }, { recipient_email: "gus@acme.example", firm_name: "Acme Brokers", address: "acme-brokers", market_name: "Summit PEO" }]) {
+      const { deps, sent } = harness();
+      await dispatchEvents([marketAnswerRow({ payload })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith("evt-market-answer", "invalid_payload", null, 1, false);
+    }
+  });
+});
+
+describe("dispatching a member's daily summary", () => {
+  // Catches: a summary mailed to anyone but its member, a line's day said in the server's zone, or links that open another firm.
+  it("tells the member what needs them, each line in words with its day in their own zone, how many more, and where to turn it off", async () => {
+    const { deps, sent } = harness();
+    const summary = await dispatchEvents([summaryRow()], deps);
+    expect(summary.sent).toBe(1);
+    expect(deps.adminRecipients).not.toHaveBeenCalled();
+    expect(deps.ownerRecipients).not.toHaveBeenCalled();
+    expect(deps.advisorRecipients).not.toHaveBeenCalled();
+    const { message } = sent[0];
+    expect(message.to).toEqual(["gus@acme.example"]);
+    expect(message.subject).toBe("3 things need you at Acme Brokers");
+    expect(message.text).toContain("- Quote expiring: Reyes Bakery, Harbor PEO (Dec 4)");
+    expect(message.text).toContain("- Task due: Gus Garage, Call the garage (Nov 22)");
+    expect(message.text).toContain("And 1 more on Home.");
+    expect(message.text).toContain("https://acme-brokers.app.example.com/home");
+    expect(message.text).toContain("https://acme-brokers.app.example.com/settings");
+    expect(message.html).toContain("Quote expiring: Reyes Bakery, Harbor PEO (Dec 4)");
+  });
+
+  it("says one thing in the singular, and nothing about more when every line is there", async () => {
+    const { deps, sent } = harness();
+    const row = summaryRow();
+    const payload = row.payload as { lines: unknown[] };
+    await dispatchEvents([summaryRow({ payload: { ...row.payload, total: 1, lines: payload.lines.slice(0, 1) } })], deps);
+    expect(sent[0].message.subject).toBe("1 thing needs you at Acme Brokers");
+    expect(sent[0].message.text).not.toContain("more on Home");
+  });
+
+  // Catches: a record's name carrying markup into the email.
+  it("escapes what a record is called", async () => {
+    const { deps, sent } = harness();
+    const row = summaryRow();
+    await dispatchEvents([summaryRow({ payload: { ...row.payload, total: 1, lines: [{ kind: "lead_quiet", name: "<b>Bold & Co</b>", about: null, at: "2026-11-15T15:00:00+00:00" }] } })], deps);
+    expect(sent[0].message.html).toContain("&lt;b&gt;Bold &amp; Co&lt;/b&gt;");
+    expect(sent[0].message.html).not.toContain("<b>Bold");
+  });
+
+  it("leaves out a line it can't read and still sends the rest; is dead at once with no line it can read, no day or no address", async () => {
+    const row = summaryRow();
+    const good = harness();
+    await dispatchEvents([summaryRow({ payload: { ...row.payload, lines: [{ kind: "something_new", name: "X", at: "2026-11-24T00:00:00Z" }, { kind: "lead_quiet", name: "Quiet Lead", about: null, at: "2026-11-15T15:00:00+00:00" }] } })], good.deps);
+    expect(good.sent[0].message.text).toContain("- Lead quiet: Quiet Lead (Nov 15)");
+    expect(good.sent[0].message.text).not.toContain("something_new");
+    for (const payload of [{ ...row.payload, lines: [] }, { ...row.payload, day: "today" }, { ...row.payload, recipient_email: "nobody" }]) {
+      const { deps, sent } = harness();
+      await dispatchEvents([summaryRow({ payload })], deps);
+      expect(sent).toHaveLength(0);
+      expect(deps.fail).toHaveBeenCalledWith("evt-summary", "invalid_payload", null, 1, false);
+    }
+  });
+
+  it("waits, and is not sent, when the app's address is not set", () => {
+    expect(sendableKinds(configFrom({ ...env, APP_BASE_URL: "" }))).not.toContain("daily_summary");
+    expect(sendableKinds(configFrom({ ...env, APP_BASE_URL: "" }))).not.toContain("market_request");
+    expect(sendableKinds(config)).toEqual(expect.arrayContaining(["market_request", "market_answer", "daily_summary"]));
   });
 });

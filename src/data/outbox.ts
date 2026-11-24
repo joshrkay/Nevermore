@@ -42,6 +42,9 @@ export const OUTBOX_KIND_LABELS: Record<string, string> = {
   lead_from_link: "A visitor asked the firm to contact them",
   firm_waiting: "A new firm is waiting for approval",
   firm_decision: "A firm's approval or refusal",
+  market_request: "A firm asked for a PEO or carrier",
+  market_answer: "The answer to a request for a PEO or carrier",
+  daily_summary: "A member's daily summary",
   conversation_message: "Email to a contact or lead",
   peo_message: "Bundle sent to a PEO",
 };

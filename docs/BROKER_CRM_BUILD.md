@@ -1693,3 +1693,39 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2112 | **Closing a firm deletes all four tables' rows** (`firm_closing_plan`, `close_a_firm.sql`), and each write asks `assert_firm_writable`, so a closing firm and a support session change none of them. |
 | D-2113 | **A support session is offered none of these sections.** The reads ask for a current member; `help_from_nevermore.sql` was not extended. |
 | D-2119 | **Not built, on purpose.** Asking for the producer number at sign-up (it is asked in Settings; `sign_up_firm` is unchanged); a line in the firm's activity for each licence change; an email to platform admins when a request arrives (they see the count on the PEOs page); files on a request; copying a profile and the oldest-checked list (BR-1.5); the licence gate by state. |
+
+## Home
+
+`docs/BROKER_READINESS_PRD.md` slice C, part one (founder, 2026-11-24, in the grilling recorded in that document): story CRM-H1 with BR-3.1, BR-3.2 and BR-5.2. Migration `20261128090000_home.sql`, SQL test `supabase/tests/home.sql` (7 cases), the browser's side in `src/data/home.ts`, `src/lib/homeApi.ts` and `src/pages/home/HomePage.tsx`. `TDD_LOG.md`, "Home".
+
+| # | Decision |
+|---|---|
+| D-2200 | **Home is one read** (`home_page`), and adds no table. The page loads and fails as a whole; CRM-H1's "one panel failed" state is not built, since no panel has a read of its own. |
+| D-2201 | **Every member of a firm lands on Home**, Edgar Allan Advisory's included (founder). `/` at a firm's address, a sign-in for no page in particular (`BROKER_DEFAULT_NEXT`), an advisor's password sign-in, the second-factor page, "Continue" after joining and the firm's tile in the menu all open `/home`. The Submissions queue keeps its address and is reached from Quotes. Replaces D-38's "the firm's address opens the queue". A page that was named is still returned to as before. |
+| D-2202 | **The day counts are 14, 7 and 7** (founder; CRM-H1 said 7, 10 and 7): a quote expiring within 14 days, an intake with nothing new for 7, a lead with no activity for 7. Upcoming tasks reach 14 days ahead and renewals 120. One place holds them in the database (`home_days()`) and one in the browser (`HOME_DAYS`); `src/data/home.test.ts` holds them equal. |
+| D-2203 | **"Needs you" has one definition** (`home_needs`), read by Home and by the daily summary. For a person's own work it goes by what they own and the tasks assigned to them and asks nothing of the caller; for a team's or everyone's it goes by the caller's level rule (D-18). |
+| D-2204 | **Whose work is the database's to grant.** An owner may ask for Mine or Everyone, a lead for Mine or My team, an agent for Mine, a support session for Everyone. A choice the caller may not make is answered as their own, and the answer says which was used and which they may choose; the page offers no switch to someone with one choice. |
+| D-2205 | **What each line is.** An intake certified: an open opportunity whose intake has a standing certification and no quote request yet. A quote expiring: a quoted request on an open opportunity whose current quote expires today or within 14 days (one already expired is not expiring). An intake quiet: under way, not changed for 7 days. A task due: open, due today or before. A lead quiet: open, its last call, note or task (or its creation) more than 7 days ago. New mail: one line a thread, from the inbox's own rows. A won or lost search, an archived account and a lead in the bin need nobody. |
+| D-2206 | **Counts and panels go by the account's owner**, as an opportunity's page does; a task by who it is assigned to. Tasks on an opportunity alone do not exist (a task is on an account, a contact or a lead, D-233). |
+| D-2207 | **Upcoming tasks is a panel on Home, not a page** (founder): open tasks due within 14 days, an overdue one included, at most 20. |
+| D-2208 | **A firm with no lead and no account sees how to start**: one line, New quote, and the three steps. No Import button until import is built (D-24). No self-ticking checklist (founder). |
+| D-2209 | **What stops a send is said to anyone it stops, not only a new firm**: a firm not yet approved, a refused firm, or the person's own mailbox not connected. A firm with records and no mailbox is helped by it as much as a new one. |
+| D-2210 | **Lines open the record; the counts open their list.** New mail opens the Inbox. The counts and stages link to the Leads, Accounts and Quotes tables as they stand: the tables' filter addresses are not set from Home yet, so "Renewals in the next 120 days" opens Accounts and not its "Renewing in 120 days" view. |
+| D-2219 | **Not built.** Per-panel failure (D-2200); filtered links (D-2210); refreshing on focus and every 60 seconds; "Opening the record clears a new mail line" is the inbox's own behaviour and is not separately tested here; My team was not exercised by a test with a lead and a team. |
+
+## Daily summary and request emails
+
+`docs/BROKER_READINESS_PRD.md` BR-3.3 and BR-3.6 (founder, 2026-11-24). Migration `20261129090000_daily_summary.sql`, SQL test `supabase/tests/daily_summary.sql` (7 cases), `supabase/functions/dispatch-outbox` (three kinds), the settings in `src/components/advisor/DailySummarySettings.tsx`. Verified with the notification harness (`.claude/skills/verify`).
+
+| # | Decision |
+|---|---|
+| D-2230 | **A request for a PEO or carrier emails every platform admin** (founder), queued by a trigger on the request, naming no recipient: the admins are looked up when it is sent. |
+| D-2231 | **The answer emails the person who asked** (founder), at their account's address when it was given. A request whose asker's account is gone emails nobody; the firm reads the answer on the page. |
+| D-2232 | **The daily summary is the member's own "Needs you"** in one firm (D-2203), without new mail: mail has its own alert, and the inbox's rows go by the caller's level, which a job has none of. A member of two firms gets one for each. |
+| D-2233 | **Monday to Friday, in the member's own morning** (founder): queued when it is between 7 and 10 where they are, once for that member, firm and day. The job runs every 15 minutes; a morning it misses entirely is not made up later. |
+| D-2234 | **The time zone is the member's own** (founder): taken from their browser the first time they open Home, kept only when they have none, and theirs to change in Settings. Until then it is America/New_York. |
+| D-2235 | **On for every member, with an off switch** (founder), in Settings; the email links there. It links to a page behind sign-in, not a one-click unsubscribe. |
+| D-2236 | **Only when there is something in it**, and only for a current member of a firm that is not suspended or closed. At most 20 lines, with the count of all of them. |
+| D-2237 | **It names records and nothing else**: an account's or lead's name, a task's title, a PEO's name, an opportunity's name. Never an intake's answers, a census or a FEIN. The event's payload holds the same lines. |
+| D-2238 | **All three are a firm's alerts** (`outbox_kind_is_firm_alert`): they wait while the firm is suspended and end unsent when it closes. `close_a_firm.sql` found this: a closing firm was left with a request email waiting for good. |
+| D-2239 | **Not built.** A one-click unsubscribe; an owner turning it off for the whole firm; renewals in the summary (they are on Home's panel, not in "Needs you"); re-checking at send time that the member is still a member. |

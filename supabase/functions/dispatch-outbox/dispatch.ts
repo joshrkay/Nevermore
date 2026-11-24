@@ -16,6 +16,9 @@ import {
   parseLeadFromLink,
   parseFirmWaiting,
   parseFirmDecision,
+  parseMarketRequest,
+  parseMarketAnswer,
+  parseDailySummary,
   parseFirmClosing,
   parseMemberLeft,
   parseDraftExpiryReminder,
@@ -27,6 +30,9 @@ import {
   renderLeadFromLink,
   renderFirmWaiting,
   renderFirmDecision,
+  renderMarketRequest,
+  renderMarketAnswer,
+  renderDailySummary,
   firmAddressUrl,
   renderFirmClosing,
   renderMemberLeft,
@@ -193,6 +199,30 @@ function buildMessage(row: OutboxRow, config: DispatchConfig, advisorTo: string[
     const { from, supportEmail, appBaseUrl } = config.prospectLink;
     return { ok: true, message: { from, to: [n.recipientEmail], replyTo: supportEmail, ...renderFirmDecision(n, { supportEmail, firmUrl: firmAddressUrl(appBaseUrl, n.address) }) } };
   }
+  if (row.kind === "market_request") {
+    // Links to the PEOs page, where a platform admin answers it: the app's address as well as the sender (BR-3.6).
+    if (!config.advisor.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseMarketRequest(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    return { ok: true, message: { from: config.advisor.from, to: advisorTo, ...renderMarketRequest(n, { peosUrl: `${config.advisor.appBaseUrl}/advisor/peos` }) } };
+  }
+  if (row.kind === "market_answer") {
+    // To the person who asked, with a link to their firm's own address.
+    if (!config.prospectLink.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseMarketAnswer(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    const { from, supportEmail, appBaseUrl } = config.prospectLink;
+    return { ok: true, message: { from, to: [n.recipientEmail], replyTo: supportEmail, ...renderMarketAnswer(n, { supportEmail, peosUrl: `${firmAddressUrl(appBaseUrl, n.address)}/advisor/peos` }) } };
+  }
+  if (row.kind === "daily_summary") {
+    // To one member, with links to Home and Settings at their firm's own address (BR-3.3).
+    if (!config.prospectLink.ok) return { ok: false, reason: "not_configured", final: false };
+    const n = parseDailySummary(row.payload);
+    if (!n) return { ok: false, reason: "invalid_payload", final: true };
+    const { from, supportEmail, appBaseUrl } = config.prospectLink;
+    const firmUrl = firmAddressUrl(appBaseUrl, n.address);
+    return { ok: true, message: { from, to: [n.recipientEmail], replyTo: supportEmail, ...renderDailySummary(n, { homeUrl: `${firmUrl}/home`, settingsUrl: `${firmUrl}/settings` }) } };
+  }
   // Every other kind is about an intake. An event with none can never be built.
   const sessionId = row.session_id;
   if (sessionId === null) return { ok: false, reason: "invalid_payload", final: true };
@@ -277,7 +307,7 @@ function firstRecipients(value: unknown): string[] | null {
 }
 
 /** The kinds sent to people of a firm, whose recipients are looked up at each send and fixed at the first preparation (D-35, D-102). */
-const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert" || kind === "lead_from_link" || kind === "firm_waiting";
+const isAdvisorKind = (kind: string) => kind === "advisor_notification" || kind === "peo_mail_arrived" || kind === "member_left" || kind === "firm_closing" || kind === "export_alert" || kind === "lead_from_link" || kind === "firm_waiting" || kind === "market_request";
 
 /** Whether a frozen message may still go as stored: an advisor alert only while everyone it names is still a current member (D-35: new joiners do not matter here). */
 function namesOnly(pending: PendingSend, current: string[], kind: string): boolean {
@@ -302,7 +332,7 @@ async function prepare(row: OutboxRow, deps: DispatchDeps): Promise<Prepared> {
   if (isAdvisorKind(row.kind)) {
     try {
       // A firm's own email (a member left, a request to close, a large export, a visitor asking to be contacted) goes to the firm's owners; an intake's alert, to the members of the intake's firm.
-      if (row.kind === "firm_waiting") {
+      if (row.kind === "firm_waiting" || row.kind === "market_request") {
         // The platform admins, whoever they are now; the event names a firm only for its own sake.
         advisorTo = await deps.adminRecipients();
       } else if (row.kind === "member_left" || row.kind === "firm_closing" || row.kind === "export_alert" || row.kind === "lead_from_link") {
@@ -435,10 +465,10 @@ export async function dispatchEvents(rows: OutboxRow[], deps: DispatchDeps): Pro
 /** The kinds this configuration can send, for `claim_outbox_events`. */
 export function sendableKinds(config: DispatchConfig): OutboxKind[] {
   const kinds: OutboxKind[] = [];
-  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting");
+  if (config.advisor.ok) kinds.push("advisor_notification", "peo_mail_arrived", "lead_from_link", "firm_waiting", "market_request");
   if (config.firmNotice.ok) kinds.push("member_left", "firm_closing", "export_alert");
   if (config.prospect.ok) kinds.push("prospect_confirmation");
-  if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder", "firm_decision");
+  if (config.prospectLink.ok) kinds.push("information_request", "draft_expiry_reminder", "firm_decision", "market_answer", "daily_summary");
   return kinds;
 }
 

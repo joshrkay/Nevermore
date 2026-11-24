@@ -1117,3 +1117,27 @@ Not mutated: the two-firm probes and registries in `data_isolation.sql` (the gat
 ### Gate (Sendable)
 
 lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 368 files, 7410 tests passed; build green; `supabase/tests/run.sh`: All 134 SQL tests passed; `npm run test:e2e`: 36 passed. The verify harness was not run: nothing in the submission-notification pipeline changed.
+
+## Home (CRM-H1 with BR-3.1, BR-3.2, BR-5.2): home.sql, 20261128090000_home.sql
+
+As "Sendable" above: tests written before the code they describe, each layer's first run made with its code. What went red is recorded as it happened.
+
+1. `supabase/tests/home.sql`, 7 cases, written whole before the migration. First run with it: all 7 passed. Nothing red, so the cases count by the mutation below.
+2. `data_isolation.sql`. Red: `registered functions that are gone or no longer privileged: home_days, home_shows` (two helpers I had classed; they are not definer functions, so the registry does not hold them). Red: `home_page(...) can be run through the API and names public.broker_mailboxes, which holds a secret: sweep it in secret_readers` (Home reads whether the caller has a mailbox). Green: Home listed in the sweep, which finds no token in its answer.
+3. `HomePage.test.tsx` (15 cases), `home.test.ts` (7), `homeApi.test.ts` (3): written before or with their modules; green on first run.
+4. The landing change turned 19 existing cases red in 9 files, each pinning `/advisor` as where a sign-in lands: `HomeRoute.test`, `WorkspaceShell.test` (two: the menu "and not Home, which isn't built yet", and the firm's tile), `brokerAuth.test` (eight: the fallback of a refused `next`), `AuthPage.test`, `BrokerCallbackPage.test` (two), `BrokerSignInPage.test`, `JoinFirmPage.test`, `SecondFactorPage.test`, `seo.guard.test` (two: `/home` was missing from `vercel.json`'s no-index list and the page-title table). Each expectation was changed to Home on purpose (D-2201); a named page is still kept as it was, and `brokerAuth.test` gained cases that `/home` is kept and its near-misses are refused.
+5. `e2e/firm-provisioning.spec.ts`: a member who has just joined was expected on "Submissions". Red: `getByRole('heading', { name: 'Submissions' })` not found. Green: they land on Home, which draws from the real database and is not a failed load.
+6. Home's "Needs you" was then moved into `home_needs` (D-2203) so the daily summary reads the same lines; `home.sql` passed unchanged.
+
+## Daily summary and request emails (BR-3.3, BR-3.6): daily_summary.sql, 20261129090000_daily_summary.sql
+
+1. `supabase/tests/daily_summary.sql`, 7 cases, written before the migration. First run: 6 passed; case 7 red (`twenty lines gave 3, expected 20`), and on a second run case 5 red instead. Not the code: the test asked for "the newest event" and an event's id is random. Each case now names the event by who it is for and which day; three runs in a row pass.
+2. `data_isolation.sql`. Red: `public tables missing from the data_isolation matrix: member_settings`. Green: its row and a fixture.
+3. `close_a_firm.sql`, a real one. Red: `and so were the firm's own emails: nothing waits for good gave 1, expected 0`: a closing firm's request email was left pending, because the three new kinds were not a firm's alerts. Green: `outbox_kind_is_firm_alert` restated with them (D-2238); the test's count of cancelled alerts is 8, with the request's among them. Then red: `no function that changes data is left out of the closing's read-only list ... gave note_my_time_zone, set_my_summary_settings` (exempt: a person's own settings, not a firm's data).
+4. `dispatch.test.ts`. Red after the kinds were added: five existing cases that list every kind (`expected [ …(14) ] to deeply equal [ …(11) ]`); each list gained the three. 12 new cases for the three emails; three of them red on my own expectation of how an unreadable event fails (`"invalid_payload", null, 1, false`, as every other kind), fixed in the tests.
+5. `dataPolicy.test.ts`. Red: `member_settings is stored but belongs to no data class`. Green: its class.
+6. `DailySummarySettings.test.tsx` (4 cases); `HomePage.test.tsx` gained that the browser's zone is reported once.
+
+### Verify harness (daily summary and request emails)
+
+Real Postgres with every migration, real PostgREST, the real `dispatch-outbox` under Deno, a stand-in provider. A certification still queues its two emails (the confirmation sent; the alert waiting with no member to tell, as before). Then: a request for "Summit PEO" by a member of the default firm, sent to the one platform admin with the link to `/advisor/peos`; a daily summary queued for 7:05 on a Tuesday in New York for that member, sent to them alone with the one line (`Lead quiet: Quiet Lead, Lead <b>Co</b> (Nov 15)`, escaped in the HTML), the link to their firm's `/home` and `/settings`; the request answered, and the answer sent to the member with the admin's words. All three ended `sent` with no error.

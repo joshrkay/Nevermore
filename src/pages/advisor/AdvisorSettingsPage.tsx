@@ -16,6 +16,7 @@ import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
 import RegistrationStatement from "@/components/advisor/RegistrationStatement";
 import { FirmLicences } from "@/components/advisor/FirmLicences";
+import { DailySummarySettings } from "@/components/advisor/DailySummarySettings";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -134,6 +135,14 @@ const AdvisorSettingsPage = () => {
         <section aria-labelledby="registrations-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="registrations-heading" className="font-semibold">Registrations with PEOs</h2>
           <RegistrationStatement firmId={firm.id} />
+        </section>
+      )}
+
+      {/* BR-3.3: the person's own daily summary, on or off, and their time zone. Not a support session's to set for anyone. */}
+      {firm && !isSupport && (
+        <section aria-labelledby="summary-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="summary-heading" className="font-semibold mb-2">Daily summary</h2>
+          <DailySummarySettings />
         </section>
       )}
 
