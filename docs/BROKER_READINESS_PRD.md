@@ -153,7 +153,7 @@ sendable by that firm.
 
 **BR-1.4 Asking for a market that isn't listed.**
 From Choose PEOs, an agent asks for a PEO or carrier to be listed: its name, a contact, and its forms if they
-have them. A platform admin is told. The agent sees the request and its answer. Until it is listed, the agent
+have them. A platform admin is told by email on each request (decided 2026-11-24; not built yet: today they see a count on the PEOs page). The agent sees the request and its answer. Until it is listed, the agent
 can record a quote from it as **Sent by hand**.
 
 **BR-1.5 Keeping many profiles.**
@@ -401,7 +401,7 @@ be used without it. B comes before any large build so that C to G are built for 
 ## 13. Decisions needed
 
 1. Which ten PEOs and five carriers are first (BR-1.1, BR-1.2).
-2. May a firm send to a market on its own contact alone, with no profile Nevermore published (BR-1.3)?
+2. ~~May a firm send to a market on its own contact alone, with no profile Nevermore published (BR-1.3)?~~ **Decided 2026-11-24 (founder): no.** A PEO or carrier is chosen for a send only once its profile is published; a firm's contact fills in where the profile names nobody (D-2103).
 3. What the licence check is: a field the firm fills, a lookup against the national producer database, or both
    (BR-2.2; counsel).
 4. Does the employer's copy show every quote received, or only those the agent chooses (BR-4.2)? Choosing may
@@ -409,5 +409,4 @@ be used without it. B comes before any large build so that C to G are built for 
 5. Is the first-year total the product's arithmetic or the agent's entry (BR-4.1)?
 6. Does Home replace the Submissions queue as the first page for every role, Edgar Allan Advisory's included?
 7. How brokers pay (QP-D7), and whether BR-2.6 asks it.
-8. Whether workers' comp (slice G) comes before or after the workspace slices C to F. It depends on which kind
-   of firm the first ten are.
+8. ~~Whether workers' comp (slice G) comes before or after the workspace slices C to F.~~ **Decided 2026-11-24 (founder): after.** The first firms are PEO brokerages only, so slice G waits and the carrier licence rule (D-2109) affects nobody yet.
