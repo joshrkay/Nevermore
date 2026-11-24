@@ -1729,3 +1729,23 @@ The rest of slice A is not code and is not done by this: published profiles for 
 | D-2237 | **It names records and nothing else**: an account's or lead's name, a task's title, a PEO's name, an opportunity's name. Never an intake's answers, a census or a FEIN. The event's payload holds the same lines. |
 | D-2238 | **All three are a firm's alerts** (`outbox_kind_is_firm_alert`): they wait while the firm is suspended and end unsent when it closes. `close_a_firm.sql` found this: a closing firm was left with a request email waiting for good. |
 | D-2239 | **Not built.** A one-click unsubscribe; an owner turning it off for the whole firm; renewals in the summary (they are on Home's panel, not in "Needs you"); re-checking at send time that the member is still a member. |
+
+## Import
+
+`docs/BROKER_READINESS_PRD.md` slice E, part one (founder, 2026-11-24: "build slice E"): story CRM-X4.1 with BR-5.1. Migration `20261130090000_import.sql`, SQL test `supabase/tests/import.sql` (12 cases), browser test `e2e/import.spec.ts`, the browser's side in `src/data/import.ts`, `src/lib/importApi.ts` and `src/pages/import/ImportPage.tsx`. `TDD_LOG.md`, "Import".
+
+| # | Decision |
+|---|---|
+| D-2300 | **The browser reads the file; the database decides what each row makes.** The file is parsed and its columns matched in the browser, and never stored. The database is sent rows of named fields, at most 500 a request, and keeps for each row only its number in the file, what it made and why it made nothing. |
+| D-2301 | **A row is held to the rules of a record made by hand**: `lead_input_error`, `account_input_error`, `contact_input_error`, `renewal_input_error`, and the level rule for whose it is. Their words are the row's reason. |
+| D-2302 | **A record already here is left as it is, not updated.** A lead by its email; an account as a new account's warning finds one (the same website, the same name and state, a contact with that email: CRM-S4.2). The story says an import updates a match; this one never changes an existing record, so it has nothing to put back when undone and can't overwrite what a broker typed. Updating is not built. |
+| D-2303 | **The review is the import's own code, run and undone**: `import_preview` applies every row inside a block that ends in an error carrying the counts out, so nothing it made remains. It can differ from the import only by what changes in between. |
+| D-2304 | **An accounts row makes the account, its contact (the main one) and its renewal together, or none of them.** A renewal date needs the current provider it renews with, and is a renewal of the employer's current plan. Dates read as 2027-01-31 or 1/31/2027. |
+| D-2305 | **The owner of a row** is the member its owner column names, by email first and then by name, or the person importing. A name no member has fails the row. A lead imports only for themselves and their teams, as they may make a record. |
+| D-2306 | **An owner or a lead imports** (the story's rule); an agent adds records one at a time and is offered neither the page's form nor its links. |
+| D-2307 | **An import is sent in requests and is safe to send twice**: a row already recorded is skipped. A request that fails is sent once more; a second failure stops the import, which says how far it got, and what it made stays listed and can be undone. |
+| D-2308 | **Undo removes what the import made**, once, within 30 days, by its runner or an owner: leads go to the bin (an owner restores one for 30 days more), accounts are deleted with their contacts and renewals. What has moved on is kept and counted: a converted lead, an account with an opportunity. |
+| D-2309 | **Limits**: 10,000 rows an import, 500 a request, 30 days to undo, in `import_limits()` and `IMPORT_LIMITS`, held equal by `import.test.ts`. |
+| D-2310 | **No field of an import can hold a tax ID or anything about an employee** (the workspace PRD's rule); a test holds the field list to it. |
+| D-2311 | **A new firm's Home offers Import beside New quote** to an owner or a lead (CRM-H1's "Nothing yet"), now that it exists (D-2208). |
+| D-2319 | **Not built.** Updating a matched record (D-2302); matching a column to a new custom field (custom fields are not built); a file other than CSV (a spreadsheet is saved as CSV first); states of operation, labels and a lead's status as import fields; progress that survives leaving the page (what was imported stays, but the rest of the file is not sent). |

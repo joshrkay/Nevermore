@@ -139,15 +139,22 @@ describe("Home", () => {
   });
 
   // BR-5.2. Break caught: a new firm shown five zeros and no way forward, or an Import button that does nothing.
-  it("shows a firm with nothing yet how to start, with New quote and no Import", async () => {
+  it("shows a firm with nothing yet how to start, with New quote, and Import for an owner who may run one", async () => {
     loadHome.mockResolvedValue(home({ empty: true, counts: { openLeads: 0, openOpportunities: 0, quotesWaiting: 0, renewalsDue: 0, wonThisQuarter: 0 } }));
     show();
-    expect(await screen.findByRole("heading", { name: "Start with a quote" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Start with a quote or bring in your book" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Import a CSV" })).toHaveAttribute("href", "/import");
     expect(screen.getByRole("link", { name: "New quote" })).toHaveAttribute("href", "/new-quote");
     expect(within(screen.getByRole("list", { name: "The three steps to a first quote" })).getAllByRole("listitem")).toHaveLength(3);
-    expect(screen.queryByRole("button", { name: /import/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /import/i })).toBeNull();
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull();
+  });
+
+  // Break caught: an agent offered Import, which the database refuses them (D-24: no dead button).
+  it("offers an agent New quote and no Import", async () => {
+    loadHome.mockResolvedValue(home({ empty: true }));
+    render(<MemoryRouter><WorkspaceContext.Provider value={{ ...workspace, isOwner: false, role: "Agent" }}><HomePage /></WorkspaceContext.Provider></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Start with a quote" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /import/i })).toBeNull();
   });
 
   it.each([

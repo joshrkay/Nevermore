@@ -1149,3 +1149,15 @@ Real Postgres with every migration, real PostgREST, the real `dispatch-outbox` u
 Not mutated: the screens (their cases were written before or with the code and each names its break), `dispatch-outbox` (12 new cases; the three kinds were also driven through the real function in the verify harness).
 
 Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 372 files, 7451 tests passed; build green; `supabase/tests/run.sh`: All 136 SQL tests passed; `npm run test:e2e`: 36 passed.
+
+## Import (CRM-X4.1, BR-5.1): import.sql, 20261130090000_import.sql, import.spec.ts
+
+1. `supabase/tests/import.sql`, 12 cases, written before the migration. First run red on case 1, `... gave 3: Enter a name: the person's, or the business's when you don't know who to speak to.; ... expected 3: A lead needs a name.`: the review worked, and my test had guessed the product's words. The same for a contact's last name in case 4. Both expectations now quote the existing rule's own words. Then all 12 passed.
+2. `data_isolation.sql`. Red: `public.import_rows has no way to insert into a firm's records as someone else, so its writes are not probed` (my registry entry made its row inside a `WITH`; the probe needs a statement that starts with `INSERT`). Green: a plain insert on the firm's fixture import. `close_a_firm.sql` passed with the two tables' fixtures, counts and the four writes placed.
+3. `import.test.ts` (16 cases) before `import.ts`. Red: `says what is wrong with ",,\nAcme,TX,5" expected false to be true`: a first row of empty cells is dropped as a blank line, so "no column names" could never be said. The unreachable branch and its case were removed.
+4. `importApi.test.ts` (7 cases). Three red with `Cannot read properties of undefined (reading 'p_rows')`: not the code. The file's `beforeEach(() => rpc.mockReset())` returned the mock, which the runner then called as a clean-up with no arguments. Braces added there and in the two files of mine that had the same line.
+5. `ImportPage.test.tsx` (13 cases), written with the page; green on first run. `HomePage.test.tsx`: the empty state now offers Import to an owner, and a new case holds that an agent is not offered it.
+6. The full unit run: one red, `AdvisorSettingsPage.test` "links an owner to ..." (`expected [ …(8) ] to deeply equal [ …(7) ]`): Settings gained the Import link. The list was given it, and a case added that a lead is offered it and an agent is not.
+7. `e2e/import.spec.ts`, the whole journey in a browser against the real functions. Red at the matching step: `getByLabel('Field for # of Employees')` expected `employees`, received `""`: a real gap, a common header not recognised. Green: more spellings of that column (and the unit case that had pinned "# of Employees" as unmatched now expects it matched). Then passed: matched, reviewed (nothing made), imported with the contact and renewal, the same file again found both already here, undone.
+
+Not yet run for this part: a mutation run of `import.sql`, and the full gate (run with the rest of slice E).

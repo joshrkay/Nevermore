@@ -919,6 +919,14 @@ _Avoid_: revert, rollback
 What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
 
+**Import** (code: `imports`, `import_rows`, `ImportPage`; story CRM-X4.1, BR-5.1, D-2300 to D-2319):
+Bringing leads, or accounts with their contacts, into a firm from a CSV file, by an owner or a lead. The person matches each column of the file to a field, reads a **Review**, and imports. Each row makes one record, by the rules a record made by hand is held to; a row whose record is already here makes nothing, and neither does one that breaks a rule, and each says why. An import is one batch: it is listed with who ran it and when, and can be undone as a whole for 30 days. It contacts nobody, and the file is read in the browser and never kept.
+_Avoid_: upload (a document is uploaded), sync, migration
+
+**Review** (of an import):
+What an import would do, said before it is run: how many rows would make a record, how many are already here, and which can't be imported and why, each by its row number in the person's file. It is worked out by the import's own rules and makes nothing.
+_Avoid_: preview, dry run, validation
+
 **Home** (story CRM-H1, BR-3.1):
 The first page a member of a firm opens: what needs them, the firm's counts, renewals coming up, open opportunities by stage and their upcoming tasks. Every firm's members land on it, Edgar Allan Advisory's included; the Submissions queue is reached from Quotes.
 _Avoid_: dashboard (the advisory team's funnel was called that), the queue

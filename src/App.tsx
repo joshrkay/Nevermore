@@ -37,6 +37,7 @@ const AccountsPage = lazy(() => import("./pages/accounts/AccountsPage"));
 const LeadsPage = lazy(() => import("./pages/leads/LeadsPage"));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage"));
 const HomePage = lazy(() => import("./pages/home/HomePage"));
+const ImportPage = lazy(() => import("./pages/import/ImportPage"));
 const QuotesPage = lazy(() => import("./pages/quotes/QuotesPage"));
 const AccountPage = lazy(() => import("./pages/accounts/AccountPage"));
 const ContactPage = lazy(() => import("./pages/contacts/ContactPage"));
@@ -104,6 +105,8 @@ const AppRoutes = () => (
                 <Route element={<RequireFirm><WorkspaceShell /></RequireFirm>}>
                   {/* Home (CRM-H1): the first page a member of a firm opens. The Submissions queue keeps its address. */}
                   <Route path="/home" element={<HomePage />} />
+                  {/* Import (CRM-X4.1): an owner or a lead brings a book in from a CSV. */}
+                  <Route path="/import" element={<ImportPage />} />
                   <Route path="/advisor" element={<AdvisorDashboardPage />} />
                   <Route path="/advisor/submissions/:id" element={<AdvisorSubmissionPage />} />
                   <Route path="/inbox" element={<InboxPage />} />

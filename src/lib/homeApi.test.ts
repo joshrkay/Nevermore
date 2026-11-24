@@ -16,7 +16,7 @@ const answer = {
 };
 
 describe("loadHome", () => {
-  beforeEach(() => rpc.mockReset());
+  beforeEach(() => { rpc.mockReset(); });
 
   it("asks for the firm's Home for whose work was chosen, in the time zone given, and reads the answer", async () => {
     rpc.mockResolvedValue({ data: answer, error: null });

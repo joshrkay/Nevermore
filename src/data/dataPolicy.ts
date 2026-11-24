@@ -491,6 +491,15 @@ export const DATA_CLASSES: DataClass[] = [
     deletion: "Nobody can change or delete an entry, an admin included. Deleting a record removes its history in the same step, and closing a firm (CRM-P1.7) deletes the firm's histories with its other data. A firm reads it through one function, as a member of the record's firm; who at Nevermore acted reads as \"Nevermore\", with no name, email or id (D-33).",
   },
   {
+    id: "imports",
+    label: "A firm's imports",
+    sensitivity: "internal",
+    examples: "Each import an owner or a lead ran: which kind (leads, or accounts with their contacts), the file's name, how many rows, who ran it and when, and whether it was undone. For each row of the file: its number, whether it made a record, was already here or could not be imported, the reason in words, and the id of what it made. No value from the file is kept here: what a row made is the lead, account, contact or renewal itself.",
+    stored: { tables: ["imports", "import_rows"], buckets: [], elsewhere: [] },
+    retention: "Kept with the firm, as the record of how its book came in. The file itself is read in the browser and never stored.",
+    deletion: "An import is undone as a whole for 30 days, which removes what it made and keeps the record that it ran. Closing a firm (CRM-P1.7) deletes both tables' rows with the firm's other data.",
+  },
+  {
     id: "member_settings",
     label: "A person's settings for the daily summary",
     sensitivity: "internal",

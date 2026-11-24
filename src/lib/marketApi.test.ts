@@ -11,7 +11,7 @@ const ok = (data: unknown) => Promise.resolve({ data, error: null });
 const refused = (code: string, message: string) => Promise.resolve({ data: null, error: { code, message } });
 
 describe("a firm's own contacts at a market", () => {
-  beforeEach(() => rpc.mockReset());
+  beforeEach(() => { rpc.mockReset(); });
 
   // Break caught: a contact filed under the wrong market, so a send to one PEO offers another's person.
   it("reads the firm's contacts, each under its market", async () => {
@@ -50,7 +50,7 @@ describe("a firm's own contacts at a market", () => {
 });
 
 describe("asking for a market that isn't listed", () => {
-  beforeEach(() => rpc.mockReset());
+  beforeEach(() => { rpc.mockReset(); });
 
   it("asks with the name, what it quotes, and a contact and note when given", async () => {
     rpc.mockReturnValue(ok({ id: 1, status: "open" }));
@@ -85,7 +85,7 @@ describe("asking for a market that isn't listed", () => {
 });
 
 describe("the firm's licences on record", () => {
-  beforeEach(() => rpc.mockReset());
+  beforeEach(() => { rpc.mockReset(); });
 
   // Break caught: a lapsed licence shown as good, or an agent offered a form the database will refuse.
   it("reads the number, each licence with whether it has lapsed, the check, and whether the reader may change it", async () => {

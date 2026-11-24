@@ -57,7 +57,7 @@ const closeBody = (firmName: string) =>
   `The firm's owners are emailed now. Nevermore keeps a record of what was deleted, when, and on whose request, without any of the content.`;
 
 const AdvisorSettingsPage = () => {
-  const { isOwner, isSupport, firm } = useWorkspace();
+  const { isOwner, isSupport, firm, role } = useWorkspace();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -118,7 +118,8 @@ const AdvisorSettingsPage = () => {
 
   const atAddress = useFirmAddress().status === "known";
   // Nevermore support reads the pages an owner reads, and is offered nothing it could not use (story CRM-P2.4).
-  const links = SETTINGS_LINKS.filter((l) => !l.ownersOnly || isOwner || isSupport);
+  // Import changes the firm's records, so a support session, which only looks, is not offered it.
+  const links = SETTINGS_LINKS.filter((l) => (l.ownersAndLeads ? isOwner || role === "Lead" : !l.ownersOnly || isOwner || isSupport));
   return (
     <main className="container mx-auto px-6 py-8 max-w-3xl">
       <h1 className="font-display text-3xl font-bold mb-6">Settings</h1>

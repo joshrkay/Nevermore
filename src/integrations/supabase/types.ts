@@ -1373,6 +1373,13 @@ export type Database = {
         Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
         Returns: Json
       }
+      // Import (20261130090000, CRM-X4.1): a review that makes nothing, an import in requests of rows, the firm's imports, one's problems, and undoing one.
+      import_preview: { Args: { p_firm_id: string; p_kind: string; p_rows: Json }; Returns: Json }
+      start_import: { Args: { p_firm_id: string; p_kind: string; p_file_name: string | null; p_total_rows: number }; Returns: string }
+      import_rows: { Args: { p_firm_id: string; p_import_id: string; p_rows: Json }; Returns: Json }
+      imports_list: { Args: { p_firm_id: string }; Returns: Json }
+      import_problems: { Args: { p_firm_id: string; p_import_id: string }; Returns: Json }
+      undo_import: { Args: { p_firm_id: string; p_import_id: string }; Returns: Json }
       // The daily summary (20261129090000, BR-3.3): a person's own settings for it, and the time zone their browser reports.
       my_summary_settings: { Args: Record<PropertyKey, never>; Returns: Json }
       set_my_summary_settings: { Args: { p_daily_summary: boolean; p_time_zone: string }; Returns: Json }

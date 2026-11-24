@@ -38,12 +38,13 @@ export const QUOTES_PATH = "/quotes";
 const QUEUE = "/advisor";
 const isQueue = (pathname: string) => pathname === QUEUE;
 
-/** What Settings opens (D-38). Activity is for owners. `atFirmAddress`: the page works only at the firm's own address, so from the bare domain the link goes there. */
-export const SETTINGS_LINKS: { label: string; description: string; to: string; ownersOnly?: boolean; atFirmAddress?: boolean }[] = [
+/** What Settings opens (D-38). Activity is for owners; Import for owners and leads (CRM-X4.1). `atFirmAddress`: the page works only at the firm's own address, so from the bare domain the link goes there. */
+export const SETTINGS_LINKS: { label: string; description: string; to: string; ownersOnly?: boolean; ownersAndLeads?: boolean; atFirmAddress?: boolean }[] = [
   { label: "Mailbox", description: "Connect the email you write from. Nevermore only sends from it; your inbox stays yours.", to: "/advisor/mailbox" },
   { label: "Invitations", description: "Invite people, list the firm's Google domain or Microsoft tenant, and approve who asked to join.", to: "/firm/invitations", atFirmAddress: true },
   { label: "Members", description: "The people who belong to the firm: remove or suspend one.", to: "/advisor/members", ownersOnly: true },
   { label: "Activity", description: "Who did what in the firm, and when.", to: "/advisor/activity", ownersOnly: true },
+  { label: "Import", description: "Bring leads, or accounts with their contacts, in from a CSV.", to: "/import", ownersAndLeads: true },
   { label: "Referral partners", description: "The partners who send you intakes, with their links and counts.", to: "/advisor/partners" },
   { label: "PEOs", description: "The PEOs you can quote, and what each one asks for.", to: "/advisor/peos" },
   { label: "Outbox", description: "The notification emails, and any that did not go out.", to: "/advisor/outbox" },

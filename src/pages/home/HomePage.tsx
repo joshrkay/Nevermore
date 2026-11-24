@@ -28,7 +28,9 @@ const GreyLines = ({ n }: { n: number }) => (
  * is shown how to start, and anyone is told what stops them sending. One read (`home_page`), so the page loads and fails as a whole.
  */
 const HomePage = () => {
-  const { firm } = useWorkspace();
+  const { firm, isOwner, role } = useWorkspace();
+  // Import is an owner's or a lead's (CRM-X4.1): nobody else is offered a button that would refuse them (D-24).
+  const mayImport = isOwner || role === "Lead";
   const [whose, setWhose] = useState<HomeWhose>("mine");
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -87,7 +89,7 @@ const HomePage = () => {
 
       {home?.empty && (
         <section aria-labelledby="home-start" className={panel}>
-          <h2 id="home-start" className="font-display text-xl font-bold mb-1">Start with a quote</h2>
+          <h2 id="home-start" className="font-display text-xl font-bold mb-1">{mayImport ? "Start with a quote or bring in your book" : "Start with a quote"}</h2>
           <p className="text-sm text-muted-foreground mb-4">Nothing is here yet. A quote makes the account, its contact and its opportunity as it goes.</p>
           <ol aria-label="The three steps to a first quote" className="list-decimal pl-5 space-y-1 text-sm mb-4">
             <li>Start a new quote for an employer and add what you already know.</li>
@@ -97,6 +99,9 @@ const HomePage = () => {
           <Link to={NEW_QUOTE_PATH} className="inline-flex items-center gap-2 min-h-11 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90">
             <Plus className="w-4 h-4" aria-hidden="true" /> New quote
           </Link>
+          {mayImport && (
+            <Link to="/import" className="inline-flex items-center min-h-11 px-4 ml-2 rounded-md border border-border text-sm hover:bg-muted">Import a CSV</Link>
+          )}
         </section>
       )}
 
