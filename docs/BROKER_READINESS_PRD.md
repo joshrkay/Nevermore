@@ -261,10 +261,11 @@ already there, import. One import is undone as a whole for 30 days. Renewal date
 employee count are importable, so the renewals view is useful on the first day. No column may be mapped to a
 tax ID or anything about an employee. Finishes CRM-X4.1.
 
-**BR-5.2 First-run checklist.**
-A new firm's Home leads with what to do first and what each unlocks: approval (with its state), connect a
-mailbox, add the firm's logo, invite a member, import a book, start a quote. Each ticks itself. It goes when all
-are done or an owner dismisses it.
+**BR-5.2 A new firm's Home.**
+Decided 2026-11-24 (founder): no self-ticking checklist. A firm with no records sees CRM-H1's "Nothing yet" state
+(one line, New quote, the three steps to a first quote; no Import button until import is built) and one line
+saying what stops it sending now: waiting for Nevermore's approval, or no mailbox connected. The line goes when
+nothing stops it. Built with Home (slice C).
 
 **BR-5.3 Roles, teams and visibility.**
 An owner changes a member's role and team after they join, makes and renames teams, and sets whether agents see
