@@ -216,6 +216,11 @@
 \i supabase/migrations/20261125100000_reply_suggestions.sql
 \i supabase/migrations/20261125110000_quote_comparison.sql
 \i supabase/migrations/20261125120000_question_requests.sql
+\i supabase/migrations/20261125130000_broker_save_whole_form.sql
+\i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
+\i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
+\i supabase/migrations/20261126090000_lines.sql
+\i supabase/migrations/20261127090000_sendable.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -390,6 +395,12 @@ BEGIN
   -- 7.7, N-3.2: a note on each firm's opportunity's comparison, which closing deletes before the opportunities they are on.
   INSERT INTO public.quote_comparison_notes (firm_id, opportunity_id, visibility, body)
   SELECT o.firm_id, o.id, 'internal', 'A note on ' || o.name FROM public.opportunities o WHERE o.firm_id IN (fa, fb);
+  -- Sendable (20261127090000): each firm's contact at a market, its request for one, and its licence on record, which closing deletes.
+  INSERT INTO public.peos (name) SELECT 'Closing Fixture PEO' WHERE NOT EXISTS (SELECT 1 FROM public.peos);
+  INSERT INTO public.firm_market_contacts (firm_id, peo_id, name, email) SELECT f, (SELECT min(id) FROM public.peos), 'A contact', 'contact@market.example' FROM unnest(ARRAY[fa, fb]) f;
+  INSERT INTO public.market_requests (firm_id, name, line) SELECT f, 'An Unlisted PEO', 'peo' FROM unnest(ARRAY[fa, fb]) f;
+  INSERT INTO public.firm_licences (firm_id, state, line) SELECT f, 'TX', 'property_casualty' FROM unnest(ARRAY[fa, fb]) f;
+  INSERT INTO public.firm_licence_records (firm_id, npn) SELECT f, '1234567' FROM unnest(ARRAY[fa, fb]) f;
   -- CRM-S3.7b: a label on each firm's account, and a bulk change with its record; closing deletes them before the accounts and, for the labels, after.
   INSERT INTO public.labels (id, firm_id, name) VALUES ('00000000-0000-4000-8000-0000000000a6', fa, 'Alpha label'), ('00000000-0000-4000-8000-0000000000b6', fb, 'Beta label');
   INSERT INTO public.account_labels (firm_id, account_id, label_id) VALUES
@@ -1188,7 +1199,7 @@ BEGIN
   PERFORM pg_temp.is(c.address, 'alpha-brokers', 'and which address the firm held');
   PERFORM pg_temp.is(c.deleted_counts, jsonb_build_object(
     'firm_invitations', 1, 'intake_invitations', 0, 'firm_organisations', 1, 'join_requests', 0, 'table_preferences', 1, 'saved_views', 2, 'record_history', 8, 'recent_records', 0, 'referral_partners', 1,
-    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
+    'activities', 2, 'conversation_file_downloads', 0, 'conversation_message_files', 0, 'conversation_message_attachments', 1, 'conversation_messages', 2, 'conversations', 1, 'labels', 1, 'account_labels', 1, 'lead_labels', 0, 'leads', 0, 'merged_records', 1, 'renewals', 1, 'placements', 1, 'commission_payments', 1, 'bulk_changes', 1, 'bulk_change_records', 1, 'quote_comparison_notes', 1, 'firm_market_contacts', 1, 'market_requests', 1, 'firm_licences', 1, 'firm_licence_records', 1, 'opportunities', 1, 'contacts', 2, 'accounts', 1, 'firm_teams', 1, 'memberships_ended', 7, 'member_suspensions_ended', 1, 'broker_mailboxes', 2, 'alerts_cancelled', 7), 'a count per table of what was deleted');
   PERFORM pg_temp.is(7::bigint, (SELECT count(*) FROM public.outbox_events e WHERE e.last_error = 'cancelled: the firm closed' AND e.dedupe_key <> 'late-alert'
     AND COALESCE(e.firm_id, (SELECT cs.firm_id FROM public.chamber_sessions cs WHERE cs.id = e.session_id)) = fa), 'and the count is the alerts that were waiting: the one alert, three of the owners'' emails, the leaving notice and two mail notices');
   PERFORM pg_temp.is((SELECT bool_and(jsonb_typeof(v) = 'number') FROM jsonb_each(c.deleted_counts) AS e(k, v)), true, 'and only numbers: no names, no content');
@@ -1201,6 +1212,12 @@ BEGIN
   PERFORM pg_temp.is((SELECT count(*) FROM public.activities WHERE firm_id = fb), 1::bigint, 'the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_comparison_notes WHERE firm_id = fa), 0::bigint, 'the firm''s notes on its comparisons are deleted');
   PERFORM pg_temp.is((SELECT count(*) FROM public.quote_comparison_notes WHERE firm_id = fb), 1::bigint, 'the other firm''s are kept');
+  PERFORM pg_temp.is((SELECT (SELECT count(*) FROM public.firm_market_contacts WHERE firm_id = fa) + (SELECT count(*) FROM public.market_requests WHERE firm_id = fa)
+                           + (SELECT count(*) FROM public.firm_licences WHERE firm_id = fa) + (SELECT count(*) FROM public.firm_licence_records WHERE firm_id = fa)), 0::bigint,
+    'the firm''s contacts at markets, its requests for one and its licences on record are deleted');
+  PERFORM pg_temp.is((SELECT (SELECT count(*) FROM public.firm_market_contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.market_requests WHERE firm_id = fb)
+                           + (SELECT count(*) FROM public.firm_licences WHERE firm_id = fb) + (SELECT count(*) FROM public.firm_licence_records WHERE firm_id = fb)), 4::bigint,
+    'the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.accounts WHERE firm_id = fb) + (SELECT count(*) FROM public.contacts WHERE firm_id = fb) + (SELECT count(*) FROM public.opportunities WHERE firm_id = fb), 3::bigint, 'and the other firm''s are kept');
   PERFORM pg_temp.is((SELECT count(*) FROM public.chamber_sessions WHERE id = pg_temp.id('intake_a')), 1::bigint, 'the intake on one of the opportunities is kept, with its employer');
   RAISE NOTICE 'close_a_firm: the deletion passed';
@@ -1427,9 +1444,13 @@ DECLARE
     'update_opportunity', 'opportunity_mark_won', 'opportunity_mark_lost', 'opportunity_reopen', 'set_placement_commission',
     'record_commission_payment', 'update_commission_payment', 'delete_commission_payment', 'bulk_leads_change', 'bulk_leads_undo', 'restore_leads',
     -- Slice 5.3 (a broker-started intake, P-2.2, P-2.4): a member's writes, each asking assert_firm_writable
-    'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'bulk_quotes_change'];
+    'start_broker_intake', 'invite_intake_client', 'remind_intake_invite', 'bulk_quotes_change',
+    -- Sendable (BR-1.3, BR-1.4, BR-2.2): a member's contacts at markets and requests for one, an owner's licences on record, each asking assert_firm_writable
+    'add_firm_market_contact', 'remove_firm_market_contact', 'request_market', 'set_firm_npn', 'add_firm_licence', 'remove_firm_licence'];
   -- Not a member's change to a firm's data, with why.
   exempt jsonb := jsonb_build_object(
+    'admin_answer_market_request', 'a platform admin''s: the answer to a firm''s request for a market',
+    'admin_record_licence_check', 'a platform admin''s: that they checked a firm''s licences',
     'admin_add_peo', 'a platform admin''s: the PEO list is the same for every firm',
     'admin_decide_firm', 'a platform admin''s',
     'admin_discard_peo_draft', 'a platform admin''s',
