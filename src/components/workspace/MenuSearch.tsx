@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { STAGE_LABELS } from "@/data/accountPage";
+import { LEAD_STATUS_LABELS } from "@/data/leads";
+import { searchLeads, type LeadHit } from "@/lib/leadSearchApi";
 import { myRecentRecords, searchRecords, SearchError, type SearchGroup, type SearchHit, type SearchKind } from "@/lib/searchApi";
 import { RECENT_RECORDS_KEY } from "./useNoteOpened";
 import { useWorkspace } from "./useWorkspace";
@@ -76,6 +78,26 @@ const Group = ({ label, group, onChoose, seeAll }: { label: string; group: Searc
     </section>
   );
 
+/** The leads found (BR-5.4), each opening its page. Asked beside the other kinds; with none found, or none read, the group is not there. */
+const LeadGroup = ({ rows, onChoose }: { rows: LeadHit[]; onChoose: () => void }) =>
+  rows.length === 0 ? null : (
+    <section aria-label="Leads">
+      <h3 className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/70">Leads</h3>
+      <ul>
+        {rows.map((lead) => (
+          <li key={lead.id}>
+            <Link to={`/leads/${encodeURIComponent(lead.id)}`} onClick={onChoose} className="block rounded-md px-2 py-1.5 text-sm outline-none ring-sidebar-ring hover:bg-sidebar-accent focus-visible:ring-2">
+              <span className="block min-w-0 truncate font-medium">{lead.name}</span>
+              <span className="block truncate text-xs text-sidebar-foreground/70">
+                {joined(LEAD_STATUS_LABELS[lead.status as keyof typeof LEAD_STATUS_LABELS] ?? words(lead.status), lead.business, lead.email)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+
 /** What is searched: whole characters, at most the 200 the database keeps (D-240), runs of spaces as one. */
 const squeeze = (typed: string) => searchTermFor(typed.replace(/\s+/g, " "), 0);
 /** How long a search is, in characters as the database counts them: an emoji is one, though JavaScript's length says two. */
@@ -120,6 +142,8 @@ export default function MenuSearch() {
   const typing = charsIn(squeeze(typed)) >= MENU_SEARCH_MIN_CHARS;
   // Both are kept per person as well as per firm: what the database returns depends on who asks, and the cache outlives a sign-out in the same tab.
   const found = useQuery({ queryKey: ["menu-search", firmId, userId, term], queryFn: () => searchRecords(firmId as string, term), enabled: !!firmId && !!userId && term !== "" && open, retry: false, staleTime: 10_000 });
+  // Leads are asked for beside the rest (BR-5.4). A failure there is never shown: the box simply has no Leads group.
+  const leads = useQuery({ queryKey: ["menu-search-leads", firmId, userId, term], queryFn: () => searchLeads(firmId as string, term), enabled: !!firmId && !!userId && term !== "" && open, retry: false, staleTime: 10_000 });
   const recent = useQuery({ queryKey: [...RECENT_RECORDS_KEY, firmId, userId], queryFn: () => myRecentRecords(firmId as string), enabled: !!firmId && !!userId && open && !typing, retry: false, staleTime: 0 });
 
   // A lapsed session signs the person out, as every failed load does (LoadFailed).
@@ -133,14 +157,16 @@ export default function MenuSearch() {
   const result = found.data;
   const waiting = typing && !found.isError && (term !== squeeze(typed) || found.isPending);
   const shown = typing && !waiting && !!result && result.query === term;
-  const nothing = shown && [result.accounts, result.contacts, result.opportunities, result.quotes].every((g) => g.rows.length === 0);
+  const leadRows = shown && leads.data && leads.data.query === term ? leads.data.rows : [];
+  // "Nothing matches" waits for the leads too, so it is never said and then taken back.
+  const nothing = shown && !leads.isPending && leadRows.length === 0 && [result.accounts, result.contacts, result.opportunities, result.quotes].every((g) => g.rows.length === 0);
   const failure = typing && found.isError ? (found.error instanceof SearchError ? found.error.message : "Couldn't search just now. Try again.") : null;
 
   return (
     <div ref={root} className="relative px-3 pb-2" onKeyDown={(e) => { if (e.key === "Escape" && open) end(); }}>
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-sidebar-foreground/70" aria-hidden="true" />
-        <label htmlFor="menu-search" className="sr-only">Search accounts, contacts, opportunities and quotes</label>
+        <label htmlFor="menu-search" className="sr-only">Search accounts, contacts, opportunities, quotes and leads</label>
         <input
           id="menu-search"
           type="search"
@@ -173,12 +199,13 @@ export default function MenuSearch() {
               <Group label="Contacts" group={result.contacts} onChoose={finish} />
               <Group label="Opportunities" group={result.opportunities} onChoose={finish} />
               <Group label="Quotes" group={result.quotes} onChoose={finish} />
+              <LeadGroup rows={leadRows} onChoose={finish} />
             </>
           )}
           {nothing && (
             <div className="px-2 py-2">
               <p className="text-sm font-medium">Nothing matches</p>
-              <p className="pb-2 text-xs text-sidebar-foreground/70">No account, contact, opportunity or quote holds &ldquo;{term}&rdquo;.</p>
+              <p className="pb-2 text-xs text-sidebar-foreground/70">No account, contact, opportunity, quote or lead holds &ldquo;{term}&rdquo;.</p>
               {!isSupport && <Button type="button" size="sm" className="h-9 rounded-md" onClick={() => setMaking(true)}>New account</Button>}
             </div>
           )}

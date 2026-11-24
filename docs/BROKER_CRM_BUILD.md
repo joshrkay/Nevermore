@@ -1669,3 +1669,152 @@ ADR 0029 (founder, 2026-11-18: workers' comp is the second line, to be built). M
 | D-2014 | **A carrier's figures on the quote's page are never made up from a read that has not answered.** They are the current quote's (the premium is on no other row), read beside the page. While that read is out the three lines are blank; when it failed with nothing in hand each says "Couldn't load"; a later read that fails keeps what was last read, as the rest of the page does. "Not yet" is said only once the quotes were read and hold no such figure. A PEO's admin fee is on the quote request itself and is drawn as before |
 | D-2015 | **The browser tests' API stand-in embeds the one row a foreign key points to** (`e2e/stack/rest.mjs`: `alias:table(columns)`, many-to-one through exactly one single-column foreign key, read by the same role in the same transaction so the other table's row security decides). The quote's page reads its quotes with their document that way, and until now no browser test could read them. Any other embedding still answers `E2E_UNSUPPORTED` |
 | D-2019 | **Left alone, on purpose.** The intake's questions, tabs and packet (the same for both lines until "the intake asked by line"); the firm link; the quotes table's columns and words; the submission's page, the inbox and the reports; the name of an opportunity the chain makes; a renewal's line; reading a carrier's quote document; a carrier's producer licence. No table is added, so there is no new data class, firm column or line in `firm_closing_plan()`; `quote_lines()` is the one function an API role can run, registered as a constant, and the three changed signatures are in `data_isolation.sql`'s allowlist |
+
+## Sendable
+
+`docs/BROKER_READINESS_PRD.md` slice A (founder, 2026-11-24: "build slice A"). The three parts of it that are code: a firm's own contacts at a PEO or carrier (BR-1.3), asking for one that isn't listed (BR-1.4), and the firm's licences on record (BR-2.2). Migration `20261127090000_sendable.sql`, SQL test `supabase/tests/sendable.sql` (14 cases; two firms, each made through sign-up and an admin's approval), the browser's side in `src/lib/marketApi.ts`, `src/components/advisor/peos/FirmMarkets.tsx` and `src/components/advisor/FirmLicences.tsx`, the browser test `e2e/workers-comp-search.spec.ts` (the licence step). `TDD_LOG.md`, "Sendable".
+
+The rest of slice A is not code and is not done by this: published profiles for the first PEOs and carriers (BR-1.1, BR-1.2), counsel's approval of the wording (BR-2.1), and production set-up (BR-2.4).
+
+| # | Decision |
+|---|---|
+| D-2100 | **A firm's contact is the firm's, not the person's who added it.** Every current member reads all of them and any member adds or removes one (`firm_to_act_for`, no level rule): a send by a colleague goes to the same people. No other firm reads, counts or changes them; the table is closed to the API and `data_isolation.sql` probes each function with two firms. |
+| D-2101 | **A firm's contact has an email address**, because it exists to be sent to; otherwise it is held to a profile contact's own rules (`peo_contact_error`). The address is kept in lower case, once for a firm at a market. Ten at most for a firm at one market (the composer reads the list on every send). Only at a market on the list: one taken off the list is offered to nobody (ADR 0010). |
+| D-2102 | **The composer offers the firm's own contacts first, then the profile's** (`peo_send_context` restated; each contact now says `own`). An address the firm keeps is offered once, as the firm names it. The typed-address path of a send is unchanged: `send_to_peo` still takes any address, so this adds a list, not a rule. |
+| D-2103 | **A market still needs a published profile to be chosen in Send to several.** A firm's contact fills the gap where the profile names nobody; it does not make a market with no profile sendable from that screen. Whether a firm may send on its own contact alone is the PRD's open decision 2. |
+| D-2104 | **A request is answered once, by a platform admin**: listed, naming a market on the list of the request's line, or not, with words (up to 500 characters) the firm reads. Nothing lists a market from a request by itself: the admin adds and publishes it as any other (ADR 0010), then answers. |
+| D-2105 | **A request is refused when a listed market of that name and line exists**, and when the firm already has it open; a firm has at most 20 open. A name a carrier holds can still be asked for as a PEO: a market is of one line (D-2004). |
+| D-2106 | **A platform admin reads every firm's requests with the firm's name** (`admin_market_requests`), as they read every waiting firm: they keep the list. No firm reads another's. |
+| D-2107 | **Only an owner keeps the firm's producer number and licences; every member reads them.** Kept in two tables of their own, not on `firms`, so nothing that reads a firm's row gains them. |
+| D-2108 | **A licence is what the firm stated.** State, line (life and health, or property and casualty), and a number and expiry when given. Nothing is looked up against a producer database; the screens say "on record", never "verified" (PRD open decision 3). |
+| D-2109 | **A send to a carrier needs a property and casualty licence on record that has not expired**, checked by a trigger on the message a send records, as the firm's approval is (D-1900): no write path skips it, and the refusal undoes the quote request, the stage move and the registration. Any state's licence passes: which states it must cover is counsel's (LEGAL_REVIEW question 2). A send to a PEO needs none. **Deploy note:** a firm that could send to a carrier before this migration can't until an owner records the licence. |
+| D-2110 | **A platform admin records that they checked a firm's licences**, never a firm they belong to (as with the decision on a firm). A change after that is said, to the firm and to the admin ("Changed since Nevermore checked them"); it does not undo the firm's approval. Times are the clock's, so a change and a check in one transaction read in order. |
+| D-2111 | **The admin reads a waiting firm's licences on request, beside the decision** (`AdvisorFirmsPage`), not as the page opens: one read per firm an admin looks at. Approval does not require a licence on record; the admin decides. |
+| D-2112 | **Closing a firm deletes all four tables' rows** (`firm_closing_plan`, `close_a_firm.sql`), and each write asks `assert_firm_writable`, so a closing firm and a support session change none of them. |
+| D-2113 | **A support session is offered none of these sections.** The reads ask for a current member; `help_from_nevermore.sql` was not extended. |
+| D-2119 | **Not built, on purpose.** Asking for the producer number at sign-up (it is asked in Settings; `sign_up_firm` is unchanged); a line in the firm's activity for each licence change; an email to platform admins when a request arrives (they see the count on the PEOs page); files on a request; copying a profile and the oldest-checked list (BR-1.5); the licence gate by state. |
+
+## Home
+
+`docs/BROKER_READINESS_PRD.md` slice C, part one (founder, 2026-11-24, in the grilling recorded in that document): story CRM-H1 with BR-3.1, BR-3.2 and BR-5.2. Migration `20261128090000_home.sql`, SQL test `supabase/tests/home.sql` (7 cases), the browser's side in `src/data/home.ts`, `src/lib/homeApi.ts` and `src/pages/home/HomePage.tsx`. `TDD_LOG.md`, "Home".
+
+| # | Decision |
+|---|---|
+| D-2200 | **Home is one read** (`home_page`), and adds no table. The page loads and fails as a whole; CRM-H1's "one panel failed" state is not built, since no panel has a read of its own. |
+| D-2201 | **Every member of a firm lands on Home**, Edgar Allan Advisory's included (founder). `/` at a firm's address, a sign-in for no page in particular (`BROKER_DEFAULT_NEXT`), an advisor's password sign-in, the second-factor page, "Continue" after joining and the firm's tile in the menu all open `/home`. The Submissions queue keeps its address and is reached from Quotes. Replaces D-38's "the firm's address opens the queue". A page that was named is still returned to as before. |
+| D-2202 | **The day counts are 14, 7 and 7** (founder; CRM-H1 said 7, 10 and 7): a quote expiring within 14 days, an intake with nothing new for 7, a lead with no activity for 7. Upcoming tasks reach 14 days ahead and renewals 120. One place holds them in the database (`home_days()`) and one in the browser (`HOME_DAYS`); `src/data/home.test.ts` holds them equal. |
+| D-2203 | **"Needs you" has one definition** (`home_needs`), read by Home and by the daily summary. For a person's own work it goes by what they own and the tasks assigned to them and asks nothing of the caller; for a team's or everyone's it goes by the caller's level rule (D-18). |
+| D-2204 | **Whose work is the database's to grant.** An owner may ask for Mine or Everyone, a lead for Mine or My team, an agent for Mine, a support session for Everyone. A choice the caller may not make is answered as their own, and the answer says which was used and which they may choose; the page offers no switch to someone with one choice. |
+| D-2205 | **What each line is.** An intake certified: an open opportunity whose intake has a standing certification and no quote request yet. A quote expiring: a quoted request on an open opportunity whose current quote expires today or within 14 days (one already expired is not expiring). An intake quiet: under way, not changed for 7 days. A task due: open, due today or before. A lead quiet: open, its last call, note or task (or its creation) more than 7 days ago. New mail: one line a thread, from the inbox's own rows. A won or lost search, an archived account and a lead in the bin need nobody. |
+| D-2206 | **Counts and panels go by the account's owner**, as an opportunity's page does; a task by who it is assigned to. Tasks on an opportunity alone do not exist (a task is on an account, a contact or a lead, D-233). |
+| D-2207 | **Upcoming tasks is a panel on Home, not a page** (founder): open tasks due within 14 days, an overdue one included, at most 20. |
+| D-2208 | **A firm with no lead and no account sees how to start**: one line, New quote, and the three steps. No Import button until import is built (D-24). No self-ticking checklist (founder). |
+| D-2209 | **What stops a send is said to anyone it stops, not only a new firm**: a firm not yet approved, a refused firm, or the person's own mailbox not connected. A firm with records and no mailbox is helped by it as much as a new one. |
+| D-2210 | **Lines open the record; the counts open their list.** New mail opens the Inbox. The counts and stages link to the Leads, Accounts and Quotes tables as they stand: the tables' filter addresses are not set from Home yet, so "Renewals in the next 120 days" opens Accounts and not its "Renewing in 120 days" view. |
+| D-2219 | **Not built.** Per-panel failure (D-2200); filtered links (D-2210); refreshing on focus and every 60 seconds; "Opening the record clears a new mail line" is the inbox's own behaviour and is not separately tested here; My team was not exercised by a test with a lead and a team. |
+
+## Daily summary and request emails
+
+`docs/BROKER_READINESS_PRD.md` BR-3.3 and BR-3.6 (founder, 2026-11-24). Migration `20261129090000_daily_summary.sql`, SQL test `supabase/tests/daily_summary.sql` (7 cases), `supabase/functions/dispatch-outbox` (three kinds), the settings in `src/components/advisor/DailySummarySettings.tsx`. Verified with the notification harness (`.claude/skills/verify`).
+
+| # | Decision |
+|---|---|
+| D-2230 | **A request for a PEO or carrier emails every platform admin** (founder), queued by a trigger on the request, naming no recipient: the admins are looked up when it is sent. |
+| D-2231 | **The answer emails the person who asked** (founder), at their account's address when it was given. A request whose asker's account is gone emails nobody; the firm reads the answer on the page. |
+| D-2232 | **The daily summary is the member's own "Needs you"** in one firm (D-2203), without new mail: mail has its own alert, and the inbox's rows go by the caller's level, which a job has none of. A member of two firms gets one for each. |
+| D-2233 | **Monday to Friday, in the member's own morning** (founder): queued when it is between 7 and 10 where they are, once for that member, firm and day. The job runs every 15 minutes; a morning it misses entirely is not made up later. |
+| D-2234 | **The time zone is the member's own** (founder): taken from their browser the first time they open Home, kept only when they have none, and theirs to change in Settings. Until then it is America/New_York. |
+| D-2235 | **On for every member, with an off switch** (founder), in Settings; the email links there. It links to a page behind sign-in, not a one-click unsubscribe. |
+| D-2236 | **Only when there is something in it**, and only for a current member of a firm that is not suspended or closed. At most 20 lines, with the count of all of them. |
+| D-2237 | **It names records and nothing else**: an account's or lead's name, a task's title, a PEO's name, an opportunity's name. Never an intake's answers, a census or a FEIN. The event's payload holds the same lines. |
+| D-2238 | **All three are a firm's alerts** (`outbox_kind_is_firm_alert`): they wait while the firm is suspended and end unsent when it closes. `close_a_firm.sql` found this: a closing firm was left with a request email waiting for good. |
+| D-2239 | **Not built.** A one-click unsubscribe; an owner turning it off for the whole firm; renewals in the summary (they are on Home's panel, not in "Needs you"); re-checking at send time that the member is still a member. |
+
+## Import
+
+`docs/BROKER_READINESS_PRD.md` slice E, part one (founder, 2026-11-24: "build slice E"): story CRM-X4.1 with BR-5.1. Migration `20261130090000_import.sql`, SQL test `supabase/tests/import.sql` (12 cases), browser test `e2e/import.spec.ts`, the browser's side in `src/data/import.ts`, `src/lib/importApi.ts` and `src/pages/import/ImportPage.tsx`. `TDD_LOG.md`, "Import".
+
+| # | Decision |
+|---|---|
+| D-2300 | **The browser reads the file; the database decides what each row makes.** The file is parsed and its columns matched in the browser, and never stored. The database is sent rows of named fields, at most 500 a request, and keeps for each row only its number in the file, what it made and why it made nothing. |
+| D-2301 | **A row is held to the rules of a record made by hand**: `lead_input_error`, `account_input_error`, `contact_input_error`, `renewal_input_error`, and the level rule for whose it is. Their words are the row's reason. |
+| D-2302 | **A record already here is left as it is, not updated.** A lead by its email; an account as a new account's warning finds one (the same website, the same name and state, a contact with that email: CRM-S4.2). The story says an import updates a match; this one never changes an existing record, so it has nothing to put back when undone and can't overwrite what a broker typed. Updating is not built. |
+| D-2303 | **The review is the import's own code, run and undone**: `import_preview` applies every row inside a block that ends in an error carrying the counts out, so nothing it made remains. It can differ from the import only by what changes in between. |
+| D-2304 | **An accounts row makes the account, its contact (the main one) and its renewal together, or none of them.** A renewal date needs the current provider it renews with, and is a renewal of the employer's current plan. Dates read as 2027-01-31 or 1/31/2027. |
+| D-2305 | **The owner of a row** is the member its owner column names, by email first and then by name, or the person importing. A name no member has fails the row. A lead imports only for themselves and their teams, as they may make a record. |
+| D-2306 | **An owner or a lead imports** (the story's rule); an agent adds records one at a time and is offered neither the page's form nor its links. |
+| D-2307 | **An import is sent in requests and is safe to send twice**: a row already recorded is skipped. A request that fails is sent once more; a second failure stops the import, which says how far it got, and what it made stays listed and can be undone. |
+| D-2308 | **Undo removes what the import made**, once, within 30 days, by its runner or an owner: leads go to the bin (an owner restores one for 30 days more), accounts are deleted with their contacts and renewals. What has moved on is kept and counted: a converted lead, an account with an opportunity. |
+| D-2309 | **Limits**: 10,000 rows an import, 500 a request, 30 days to undo, in `import_limits()` and `IMPORT_LIMITS`, held equal by `import.test.ts`. |
+| D-2310 | **No field of an import can hold a tax ID or anything about an employee** (the workspace PRD's rule); a test holds the field list to it. |
+| D-2311 | **A new firm's Home offers Import beside New quote** to an owner or a lead (CRM-H1's "Nothing yet"), now that it exists (D-2208). |
+| D-2319 | **Not built.** Updating a matched record (D-2302); matching a column to a new custom field (custom fields are not built); a file other than CSV (a spreadsheet is saved as CSV first); states of operation, labels and a lead's status as import fields; progress that survives leaving the page (what was imported stays, but the rest of the file is not sent). |
+
+## Roles, teams and visibility
+
+`docs/BROKER_READINESS_PRD.md` slice E, part two: story CRM-X1.1's "an owner changes a member's role or team, creates a team ... and puts a team inside another", with the visibility setting (BR-5.3). Migration `20261201090000_roles_teams_visibility.sql`, SQL test `supabase/tests/roles_teams_visibility.sql` (7 cases), `src/lib/teamsApi.ts`, `src/components/advisor/RolesAndTeams.tsx` on the Members page.
+
+| # | Decision |
+|---|---|
+| D-2320 | **No table is added.** `firm_teams`, a membership's `team_id` and `firms.visibility` were there, and the level rule already goes by them (`can_see_firm_record`). What was missing was any way to change them after a person joined. |
+| D-2321 | **A role or team change ends one membership and begins another at the same moment** (`change_member`), never an edit: a membership is never changed (D-33), so who could see a record on a given day can still be answered. The firm's record gains the ending and the beginning, as for any membership; there is no "role changed" kind. |
+| D-2322 | **The change does not disconnect the person's mailbox.** Ending a person's last membership drops their mailbox; a role change ends it for an instant. `drop_mailbox_when_membership_ends` (restated, every line kept) leaves the mailbox alone while a setting only `change_member` makes is on. |
+| D-2323 | **The firm keeps an owner.** Changing the only owner to anything else is refused in words ("Make someone else an owner first"), by the existing rule (`keep_firm_owner`). The same rule also refuses changing the only owner's team, since that too ends their one owner membership: an owner sees everything, so a team means nothing for them. |
+| D-2324 | **A team has a name, used once in the firm whatever its capitals, and may sit in another.** A team can't sit under itself or a team inside it (the existing trigger, said in words). `lead_user_id` on a team is not set from the screen: who leads a team is whoever has the Lead role in it, which is what the level rule reads. |
+| D-2325 | **A team anyone has belonged to is never deleted**: an ended membership still says which team the person was in and is never changed. Such a team is renamed or emptied. One that holds another team is not deleted either. The page offers Delete only where it would work. |
+| D-2326 | **Who sees what is one setting an owner changes** (`set_firm_visibility`): by level, or everyone sees everything. It takes effect at once, for every read. |
+| D-2327 | **A support session reads the section and is offered no control** (ADR 0024); every write asks `assert_firm_writable`. |
+| D-2339 | **Not built.** The members table's "how many accounts they own" and "invited" rows (invitations have their own page); reassigning a removed member's records in bulk from here (the accounts and leads tables' bulk change of owner does it); a team's named lead. |
+
+## Leads catch up
+
+`docs/BROKER_READINESS_PRD.md` slice E, part three (BR-5.4), of which three of four are built (the duplicate warning, leads in the menu's search, and the Label column and filter). Migration `20261202090000_lead_duplicates.sql`, SQL test `supabase/tests/lead_duplicates.sql` (3 cases), `src/lib/leadDuplicateApi.ts`, `src/components/leads/LeadDuplicateWarning.tsx` in the New lead form.
+
+| # | Decision |
+|---|---|
+| D-2340 | **A new lead is warned of as a new account is** (CRM-S4.2): while the person types, the firm's leads and accounts that may be the same are said. A lead matches by its email, or by its name and business together; a name alone is no match (two people share a name). An account matches as a new account's warning finds one, with the lead's business as its name: the same name and state, or a contact with that email. A lead in the bin is no match. |
+| D-2341 | **What the person may not see is only said to exist**, with whom to ask, exactly as for accounts (D-602): the mask is rebuilt in the browser from its two fields, so nothing else the answer held can reach the screen. Another firm's records are never said to exist. |
+| D-2342 | **Advice only.** The save is as it was; a check that fails shows nothing; nothing is asked until there is an email address, or a name with a business. |
+| D-2343 | **Leads are found from the menu's search by a read of their own** (`search_leads`, `20261205090000_search_leads.sql`, `supabase/tests/search_leads.sql`, 3 cases), asked beside `search_records`, which shares one budget across its four kinds and stays as it is. A lead is found when its name, business, email or phone holds every word; five at most, the latest changed first; by the level rule. One in the bin or already converted is not found (the account and contact it became are). |
+| D-2344 | **A failed lead search is never shown**: the box has no Leads group and the other kinds are as they were. "Nothing matches" waits for the leads, so it is never said and taken back. There is no "See all" for leads: the leads table takes no search from the address. |
+| D-2345 | **The leads table has a Label column and filter, as the accounts table has** (issue 245; `20261206090000_lead_labels_column.sql`, `supabase/tests/lead_labels_column.sql`, 4 cases). A row holds the lead's labels in order (`leads_row` gains `labels`). The filter is any of, none of, or is empty, by the word whatever its case; a word the firm no longer has matches nothing and is not refused. Sorting is by the labels read as one text, the unlabelled last. The column is under Columns, not among the story's default ones. |
+| D-2346 | **Everything that goes through the table's filters takes the Label filter with no change of its own**: saved views, view counts, a bulk change of "everything that matches", and an export's filters. |
+| D-2347 | **The Label column is not in the export**, as on the accounts table: the export registry has no column for it. The filter still narrows what is exported. |
+| D-2349 | **Not built, of BR-5.4.** Merging two leads and "Keep separate" (the account merge's machinery does not cover leads, D-649). Its own piece of work. |
+
+## Templates and replies
+
+`docs/BROKER_READINESS_PRD.md` slice E, parts four and five (BR-3.5, BR-3.4). Migration `20261203090000_templates_and_reply.sql`, SQL test `supabase/tests/templates_and_reply.sql` (5 cases), `src/data/messageTemplates.ts`, `src/lib/templatesApi.ts`, `src/components/advisor/MessageTemplates.tsx` (Settings), and the composers `FollowUpOrWithdraw`, `SendToPeo`, `SendToSeveralPeos`.
+
+| # | Decision |
+|---|---|
+| D-2350 | **One template for each kind of message, for the whole firm**: a first send, a follow-up, a withdrawal (`firm_message_templates`, keyed by firm and kind). Not a library of named templates and not a person's own: the need is that a firm's messages sound like the firm, and one text for each kind does that with nothing to choose at send time. |
+| D-2351 | **An owner keeps them; every member's composer reads them.** Clearing one puts the product's own text back (the row is deleted); there is no "empty" template. At most 5,000 characters. |
+| D-2352 | **A template only opens the note.** The agent edits it before sending, and the block the database adds under every message (the link, what it opens, when it lapses) is never part of one, so a template cannot remove or reword it. |
+| D-2353 | **Fields are filled in the browser, when the message is opened**: `{company}`, `{file_id}`, `{version}`, `{sent_on}`, `{market}`. A field with nothing to say is left out; braces round any other word stay as typed. The database stores and returns the text as written. One note to several PEOs names no one market. |
+| D-2354 | **A composer never waits on a template, and never writes over typed words.** Unread, it opens with the product's text. An update (M-2.3) takes no template: it says what changed. The closing withdrawal (Won, Lost, Archived) keeps the product's text, which is written to name no PEO. |
+| D-2355 | **A reply is the third thing on a thread** (`reply_to_peo`): the advisor's own words from their own mailbox, continuing the thread, with no link. Offered beside Follow up and Withdraw, to the people last sent to. |
+| D-2356 | **A reply changes nothing else**: no status, no link made or revoked. It is recorded and sent through the same path as a withdrawal's message (`record_peo_thread_message`, sent as written), so the firm's approval, the closing-firm rule and the mailbox rule hold for it as for every send. |
+| D-2357 | **Refused** on a closed quote request (send again to write to it), on one the product never sent (recorded by hand: there is no thread), for a PEO the employer no longer authorizes, with no connected mailbox, and with nothing to say. |
+| D-2358 | **Not built.** Attachments on a reply; a reply to a message that came in on a closed quote request; a person's own templates; templates for emails to employers. |
+
+## Reports
+
+`docs/BROKER_READINESS_PRD.md` slice F (BR-6.1; CRM-R1.1 to CRM-R1.3). Migration `20261204090000_reports.sql`, SQL test `supabase/tests/reports.sql` (8 cases), `src/data/reports.ts`, `src/lib/reportsApi.ts`, `src/pages/reports/ReportsPage.tsx` at `/reports`, `e2e/reports.spec.ts`.
+
+| # | Decision |
+|---|---|
+| D-2400 | **One read answers all five reports** (`firm_reports`): one set of controls applies to all, so one call keeps them agreeing with each other. Nothing is stored (CRM-R1.3); nothing reads an intake's answers. |
+| D-2401 | **Who is counted is Home's rule** (`home_shows`): a record by its account's owner, by the level rule; "whose" is Mine, My team (a lead) or Everyone (an owner), and one a person may not ask for is read as their own. A named agent as a filter is not built. |
+| D-2402 | **The period is two days in the person's own time zone**, at most 1,100 days. This month, this quarter, this year, the last 12 months, or two dates. The default is this quarter. |
+| D-2403 | **The pipeline and the coming renewals are as of today**, whatever the period: they say what is open and what is coming. The page says so. |
+| D-2404 | **"How long it has sat" is days since the opportunity was made**, with the median for each stage and the longest open listed first. Days in the current stage would need each stage change kept for searches with no intake, which it is not. |
+| D-2405 | **Quotes by market counts quote requests first sent in the period**: quoted is a quote received, declined is the status, placed is a placement made from that quote request. Win rate is placed over quoted. Days to a quote is the median from the send to the quote. |
+| D-2406 | **Won and lost goes by the day it happened**: the opportunity's own stamp, or for one closed from its intake's pipeline, the day the pipeline said so. By owner (the opportunity's, else the account's), by source, and lost by reason. |
+| D-2407 | **Renewals**: due by month for the next 12 (not marked as not renewed, not already kept), with how many have an opportunity; and for renewals dated in the period, kept (its opportunity won), not renewed, or open. |
+| D-2408 | **Commission is an owner's** (CRM-R1.2; a support session reads it too). Expected is a twelfth of a placement's yearly figure for each month of the period it is in force for any part of; received is what was recorded in the period. By month and by placement. For anyone else the answer holds none and the page shows no panel. |
+| D-2409 | **A line narrows every report**: opportunities by their line; quote requests, placements and renewals through their opportunity. A renewal or placement with no opportunity is counted only with every line. |
+| D-2410 | **Every figure's records are listed under it, each a link**, up to 50, and the page says when a list holds fewer than its figure. Opening the right table already filtered (CRM-R1.1) is not built: the tables do not take these filters from the address. |
+| D-2411 | **Each panel's table is saved as a CSV** built in the browser from what is on screen, every cell made safe to open (`src/lib/csv.ts`); not offered during a support session (D-128). |
+| D-2412 | **Reports in the menu opens `/reports`**; the intake funnel is a link on it and still marks the menu item. **Not built:** the leads and activity reports (P2 in the PRD), charts beyond the bars beside a number, a named agent or a source as a control, a report builder. |
+

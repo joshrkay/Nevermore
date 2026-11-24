@@ -13,7 +13,7 @@ beforeEach(() => rpc.mockReset());
 const row = {
   id: "l1", name: "Lucia Reyes", title: "Owner", business: "Reyes Bakery", email: "lucia@reyes.example", phone: null, city: "Portland", state: "OR",
   employees: 23, current_provider: null, source: "added_by_hand", status: "working", not_fit_reason: null, created_at: "2026-11-01T00:00:00+00:00",
-  owner: "u1", owner_name: "Dana Reyes", last_activity_at: "2026-11-10T00:00:00+00:00",
+  owner: "u1", owner_name: "Dana Reyes", last_activity_at: "2026-11-10T00:00:00+00:00", labels: ["Hot"],
 };
 
 describe("listLeads", () => {
@@ -77,7 +77,9 @@ describe("the leads table's fields agree with the database", () => {
     const sql = readFileSync("supabase/migrations/20261121110500_leads_table_query.sql", "utf8");
     const body = sql.match(/CREATE TYPE public\.leads_row AS \(([\s\S]*?)\n\);/);
     expect(body).not.toBeNull();
-    const created = body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined);
+    // The columns the type was made with, then each one a later migration added to it, in order.
+    const added = migrations.flatMap((m) => [...m.matchAll(/ALTER TYPE public\.leads_row ADD ATTRIBUTE (\w+) /g)].map((x) => x[1]));
+    const created = [...body![1].split("\n").map((l) => l.trim().match(/^(\w+) /)?.[1]).filter((c): c is string => c !== undefined), ...added];
     expect([...LEAD_ROW_KEYS]).toEqual(created);
     expect(Object.keys(row)).toEqual(created);
   });

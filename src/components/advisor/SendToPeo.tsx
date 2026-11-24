@@ -5,10 +5,12 @@ import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { DRAFT_WORDING_NOTICE } from "@/data/legalWording";
 import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
+import { fillTemplate } from "@/data/messageTemplates";
 import { peoSendBlockPreview, peoSendSubject } from "@/data/peoSend";
 import { quoteReplyDomain, replyAddress } from "@/data/quoteRequests";
 import { loadPeoSendContext, sendToPeo, type PeoSend, type PeoSendContext } from "@/lib/peoSendApi";
 import { loadRegisteredElsewhere } from "@/lib/peoRegistrationsApi";
+import { firmTemplatesOrNone } from "@/lib/templatesApi";
 import { registeredElsewhereWords } from "@/data/peoRegistrations";
 
 export interface SendToPeoProps {
@@ -75,12 +77,20 @@ const SendToPeo = (p: SendToPeoProps) => {
       (c) => !cancelled && setContext(c),
       (err) => !cancelled && setProblem(failureWords(err, `We couldn't load the ${MARKET_WORDS[p.line ?? "peo"].one}'s contacts.`)),
     );
+    // BR-3.5: a first send opens with the firm's own text when it has any; never over words already typed, and never on an update, which says what changed.
+    if (!update) {
+      void firmTemplatesOrNone().then((t) => {
+        if (cancelled || !t.send) return;
+        const text = fillTemplate(t.send, { company: p.companyName, file_id: p.fileId, version: p.version, sent_on: null, market: p.peo });
+        setNote((now) => (now === "" ? text : now));
+      });
+    }
     // Unread, there is simply no warning: the send never waits on it.
     loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(registeredElsewhereWords(rows, p.peo, p.line)), () => undefined);
     return () => {
       cancelled = true;
     };
-  }, [open, p.sessionId, p.peo, p.line]);
+  }, [open, update, p.sessionId, p.peo, p.line, p.companyName, p.fileId, p.version]);
 
   const send = async () => {
     setBusy(true);

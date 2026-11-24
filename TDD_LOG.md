@@ -1085,3 +1085,141 @@ Screen code, `mutate.sh` against every file changed under `src/` that holds logi
 Not mutated: `src/integrations/supabase/types.ts` (types only), the browser test and its stand-in (`e2e/stack/rest.mjs`, whose embedding the browser test itself holds: before it the quote's page could not read its quotes there).
 
 Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 364 files, 7366 tests passed; build green; `supabase/tests/run.sh`: All 133 SQL tests passed; `npm run test:e2e`: 36 passed. The verify harness (every migration behind real PostgREST, the real `dispatch-outbox`): a prospect starts and certifies an intake (204, the database's own File ID, version 1, the intake a PEO intake), the confirmation is sent, the advisor alert waits with `no_recipients` as it does for a firm with no member, and a prospect's PATCH of `line` is answered 204 and leaves the line as it was.
+
+## Sendable (BROKER_READINESS_PRD slice A): a firm's contacts at a market, asking for one, licences on record (sendable.sql, 20261127090000_sendable.sql)
+
+Not the cycle-by-cycle record the sections above are. The tests were written before the code they describe, but each layer's tests were written together and first run after its code, so there is no red line per case to quote. What stands in for it is the mutation run below, which shows each named rule's test red when the rule is broken.
+
+1. `supabase/tests/sendable.sql`, 14 cases, written whole before `20261127090000_sendable.sql`. First run with the migration: 12 passed at once. Two reds, both real:
+   - the set-up's published profile (`Name where the contacts came from, and when it was checked, before publishing`): a fixture slip, placed as `peo_send.sql` places one (triggers off). Not a red of the code.
+   - case 13, `the admin reads that it changed since gave false, expected true`: the change and the check were stamped with the transaction's time, so a change made after a check in one transaction read as not after it. Green: both stamped with `clock_timestamp()`.
+2. `data_isolation.sql`, the migration added to its load list. It failed five times in turn, each a registry the new tables and functions were missing from, and each fixed by saying what they are: `public.firm_licence_records is not in the registry` (and the other three tables); `holds no rows, so the matrix proves nothing for it` (fixtures for both firms); `privileged functions not in the registry` (16 functions classed); `firm-scoped functions with no two-firm probe` (9 probes, the two removals last); `functions the API roles can execute that the data_isolation allowlist doesn't cover` (13 listed). Then: all cases passed.
+3. `close_a_firm.sql`, loaded through this migration (it stopped at 20261125120000). Red: `no function that changes data is left out of the closing's read-only list ... gave add_firm_licence, add_firm_market_contact, admin_answer_market_request, admin_record_licence_check, remove_firm_licence, remove_firm_market_contact, request_market, set_firm_npn` (six guarded, two exempt as a platform admin's). Red again: `every guarded function still asks whether the firm is closing gave add_firm_licence, remove_firm_licence, set_firm_npn`: the three asked through a shared helper, which the test can't see. Green: each asks `assert_firm_writable` itself, first.
+4. `peo_send.sql` loads this migration (it restates `peo_send_context`, D-105); its case 24 expects each contact marked `"own": false`.
+5. `src/data/dataPolicy.test.ts`. Red: `firm_market_contacts is stored but belongs to no data class` (four tables). Green: the class `firm_markets_and_licences`, and its row in `docs/DATA_HANDLING.md`.
+6. `src/lib/marketApi.test.ts` (14 cases), written before `marketApi.ts`. Red: `Failed to resolve import "./marketApi"`. Green on the first run with the module.
+7. `FirmMarkets.test.tsx` (13 cases), `FirmLicences.test.tsx` (9), `AdvisorPeosPage.firm.test.tsx` (4), written after the components. First run failed on the test files' own set-up (`supabaseUrl is required`, `useAuth must be used within an AuthProvider`: the client and the sign-in stubbed), then passed.
+8. The full unit run then failed eight existing cases in four files (`AdvisorFirmsPage.test`, `AdvisorPeosPage.test`, `AdvisorSettingsClose.test`, `AdvisorSettingsLeave.test`): the new sections read through a database the tests don't have, and drew a second alert and a second "Try again". Each file now gives `@/lib/marketApi` a quiet stand-in; no assertion was changed.
+9. `SendToSeveralPeos.test.tsx`: the sentence for a PEO with nobody to send to now names the firm's own contacts and where to add one; the two cases that quote it were given the new words.
+10. `e2e/workers-comp-search.spec.ts`: before the send to the carrier, the send is refused for no licence (in the database's words, with no quote request made), the founder adds a Texas property and casualty licence in Settings, the page stops saying nothing can be sent to a carrier, and the send goes. First run failed one step later (`columnheader 'Carrier'` not found): the test had left the page on Settings. Fixed in the test.
+
+### Mutation (Sendable)
+
+18 breaks, one at a time, each against its own tests. 17 red on the first run:
+
+- Screens and API (7): a market's contacts not narrowed to the market on screen; the admin's choices not narrowed to the request's line, and not to listed markets; a lapsed licence counted as leave to send to a carrier (two ways); any error's text shown in place of the screen's own words.
+- Database (11): another firm's contacts offered in the composer; a lapsed licence passing the gate; a life and health licence passing it; the gate applied to PEO sends; an agent changing licences; a member removing another firm's contact; a request refused for a market of another line; an answer naming a market of another line; the profile's contact offered twice beside the firm's; a contact added at a market taken off the list.
+
+One stayed green: a declined answer still naming a market (the screen never sends one). `marketApi.test.ts` now declines with a market chosen and expects none sent; red under the break.
+
+Not mutated: the two-firm probes and registries in `data_isolation.sql` (the gate's own cases prove it fails on an unregistered table and an unprobed function), `types.ts`.
+
+### Gate (Sendable)
+
+lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 368 files, 7410 tests passed; build green; `supabase/tests/run.sh`: All 134 SQL tests passed; `npm run test:e2e`: 36 passed. The verify harness was not run: nothing in the submission-notification pipeline changed.
+
+## Home (CRM-H1 with BR-3.1, BR-3.2, BR-5.2): home.sql, 20261128090000_home.sql
+
+As "Sendable" above: tests written before the code they describe, each layer's first run made with its code. What went red is recorded as it happened.
+
+1. `supabase/tests/home.sql`, 7 cases, written whole before the migration. First run with it: all 7 passed. Nothing red, so the cases count by the mutation below.
+2. `data_isolation.sql`. Red: `registered functions that are gone or no longer privileged: home_days, home_shows` (two helpers I had classed; they are not definer functions, so the registry does not hold them). Red: `home_page(...) can be run through the API and names public.broker_mailboxes, which holds a secret: sweep it in secret_readers` (Home reads whether the caller has a mailbox). Green: Home listed in the sweep, which finds no token in its answer.
+3. `HomePage.test.tsx` (15 cases), `home.test.ts` (7), `homeApi.test.ts` (3): written before or with their modules; green on first run.
+4. The landing change turned 19 existing cases red in 9 files, each pinning `/advisor` as where a sign-in lands: `HomeRoute.test`, `WorkspaceShell.test` (two: the menu "and not Home, which isn't built yet", and the firm's tile), `brokerAuth.test` (eight: the fallback of a refused `next`), `AuthPage.test`, `BrokerCallbackPage.test` (two), `BrokerSignInPage.test`, `JoinFirmPage.test`, `SecondFactorPage.test`, `seo.guard.test` (two: `/home` was missing from `vercel.json`'s no-index list and the page-title table). Each expectation was changed to Home on purpose (D-2201); a named page is still kept as it was, and `brokerAuth.test` gained cases that `/home` is kept and its near-misses are refused.
+5. `e2e/firm-provisioning.spec.ts`: a member who has just joined was expected on "Submissions". Red: `getByRole('heading', { name: 'Submissions' })` not found. Green: they land on Home, which draws from the real database and is not a failed load.
+6. Home's "Needs you" was then moved into `home_needs` (D-2203) so the daily summary reads the same lines; `home.sql` passed unchanged.
+
+## Daily summary and request emails (BR-3.3, BR-3.6): daily_summary.sql, 20261129090000_daily_summary.sql
+
+1. `supabase/tests/daily_summary.sql`, 7 cases, written before the migration. First run: 6 passed; case 7 red (`twenty lines gave 3, expected 20`), and on a second run case 5 red instead. Not the code: the test asked for "the newest event" and an event's id is random. Each case now names the event by who it is for and which day; three runs in a row pass.
+2. `data_isolation.sql`. Red: `public tables missing from the data_isolation matrix: member_settings`. Green: its row and a fixture.
+3. `close_a_firm.sql`, a real one. Red: `and so were the firm's own emails: nothing waits for good gave 1, expected 0`: a closing firm's request email was left pending, because the three new kinds were not a firm's alerts. Green: `outbox_kind_is_firm_alert` restated with them (D-2238); the test's count of cancelled alerts is 8, with the request's among them. Then red: `no function that changes data is left out of the closing's read-only list ... gave note_my_time_zone, set_my_summary_settings` (exempt: a person's own settings, not a firm's data).
+4. `dispatch.test.ts`. Red after the kinds were added: five existing cases that list every kind (`expected [ …(14) ] to deeply equal [ …(11) ]`); each list gained the three. 12 new cases for the three emails; three of them red on my own expectation of how an unreadable event fails (`"invalid_payload", null, 1, false`, as every other kind), fixed in the tests.
+5. `dataPolicy.test.ts`. Red: `member_settings is stored but belongs to no data class`. Green: its class.
+6. `DailySummarySettings.test.tsx` (4 cases); `HomePage.test.tsx` gained that the browser's zone is reported once.
+
+### Verify harness (daily summary and request emails)
+
+Real Postgres with every migration, real PostgREST, the real `dispatch-outbox` under Deno, a stand-in provider. A certification still queues its two emails (the confirmation sent; the alert waiting with no member to tell, as before). Then: a request for "Summit PEO" by a member of the default firm, sent to the one platform admin with the link to `/advisor/peos`; a daily summary queued for 7:05 on a Tuesday in New York for that member, sent to them alone with the one line (`Lead quiet: Quiet Lead, Lead <b>Co</b> (Nov 15)`, escaped in the HTML), the link to their firm's `/home` and `/settings`; the request answered, and the answer sent to the member with the admin's words. All three ended `sent` with no error.
+
+### Mutation and gate (Home, daily summary and request emails)
+
+23 breaks of the two migrations, one at a time, each against its own SQL test; all 23 red on the first run. Home (12): each of the three day counts changed; an expired quote counted as expiring; a certified intake listed after it was sent; a done task listed; a task shown to "Mine" whoever it is for; an agent given everyone's by asking; won and lost searches counted as open; a renewal marked as not renewed listed; a waiting firm told nothing stops it; another firm's Home answered without a membership. Daily summary (11): sent at weekends; sent at any hour; the hour taken in UTC and not the member's zone; sent to a member who turned it off; to one who has left; to a suspended firm's; sent with nothing in it; holding everyone's work and not the member's own; more than twenty lines; a chosen zone overwritten by the browser's; an answer mailed when the asker's account is gone.
+
+Not mutated: the screens (their cases were written before or with the code and each names its break), `dispatch-outbox` (12 new cases; the three kinds were also driven through the real function in the verify harness).
+
+Gate: lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 372 files, 7451 tests passed; build green; `supabase/tests/run.sh`: All 136 SQL tests passed; `npm run test:e2e`: 36 passed.
+
+## Import (CRM-X4.1, BR-5.1): import.sql, 20261130090000_import.sql, import.spec.ts
+
+1. `supabase/tests/import.sql`, 12 cases, written before the migration. First run red on case 1, `... gave 3: Enter a name: the person's, or the business's when you don't know who to speak to.; ... expected 3: A lead needs a name.`: the review worked, and my test had guessed the product's words. The same for a contact's last name in case 4. Both expectations now quote the existing rule's own words. Then all 12 passed.
+2. `data_isolation.sql`. Red: `public.import_rows has no way to insert into a firm's records as someone else, so its writes are not probed` (my registry entry made its row inside a `WITH`; the probe needs a statement that starts with `INSERT`). Green: a plain insert on the firm's fixture import. `close_a_firm.sql` passed with the two tables' fixtures, counts and the four writes placed.
+3. `import.test.ts` (16 cases) before `import.ts`. Red: `says what is wrong with ",,\nAcme,TX,5" expected false to be true`: a first row of empty cells is dropped as a blank line, so "no column names" could never be said. The unreachable branch and its case were removed.
+4. `importApi.test.ts` (7 cases). Three red with `Cannot read properties of undefined (reading 'p_rows')`: not the code. The file's `beforeEach(() => rpc.mockReset())` returned the mock, which the runner then called as a clean-up with no arguments. Braces added there and in the two files of mine that had the same line.
+5. `ImportPage.test.tsx` (13 cases), written with the page; green on first run. `HomePage.test.tsx`: the empty state now offers Import to an owner, and a new case holds that an agent is not offered it.
+6. The full unit run: one red, `AdvisorSettingsPage.test` "links an owner to ..." (`expected [ …(8) ] to deeply equal [ …(7) ]`): Settings gained the Import link. The list was given it, and a case added that a lead is offered it and an agent is not.
+7. `e2e/import.spec.ts`, the whole journey in a browser against the real functions. Red at the matching step: `getByLabel('Field for # of Employees')` expected `employees`, received `""`: a real gap, a common header not recognised. Green: more spellings of that column (and the unit case that had pinned "# of Employees" as unmatched now expects it matched). Then passed: matched, reviewed (nothing made), imported with the contact and renewal, the same file again found both already here, undone.
+
+Not yet run for this part: a mutation run of `import.sql`, and the full gate (run with the rest of slice E).
+
+## Roles, teams and visibility (CRM-X1.1, BR-5.3): roles_teams_visibility.sql, 20261201090000_roles_teams_visibility.sql
+
+1. `supabase/tests/roles_teams_visibility.sql`, 7 cases, before the migration. First run: case 1 (teams) passed; case 2 red, `which is what they now are gave agent/no team, expected lead/East`. Real: the change stamped the old membership's end and the new one's start with the wall clock, and `membership_is_current` goes by the transaction's time, so inside the changing transaction the old membership still read as current and the new one as not begun. Green: the transaction's time, as `end_membership_now` uses. Then all 7 passed. Case 3 is the first test of "My team": a lead reads, through Home, the lead of an agent in a team inside their own, and stops reading it when the agent is taken out.
+2. `data_isolation.sql` and `close_a_firm.sql` passed with the five functions listed, classed and probed, and the four writes among those a closing firm refuses.
+3. `RolesAndTeams.test.tsx` (9 cases), written with the component; green on first run. `AdvisorMembersPage.test.tsx` given a quiet stand-in for the new section's read; no assertion changed.
+
+## Leads catch up (BR-5.4, part): lead_duplicates.sql, 20261202090000_lead_duplicates.sql
+
+1. `supabase/tests/lead_duplicates.sql`, 3 cases, before the migration; green once it was written. `data_isolation.sql` passed with the function listed, classed and probed.
+2. `NewLeadDialog.test.tsx`, two new cases. Red: `useHref() may be used only in the context of a <Router>`: the warning links to the record, so the test renders inside a `MemoryRouter`. Then red on the debounce: one timer for all fields dropped a change typed in a second field; each field is now debounced on its own.
+
+## Templates and replies (BR-3.5, BR-3.4): templates_and_reply.sql, 20261203090000_templates_and_reply.sql
+
+1. `supabase/tests/templates_and_reply.sql`, 5 cases, written with the migration; green on first run.
+2. `data_isolation.sql` passed with the table in the matrix and the registry and the three functions listed, classed and probed. `close_a_firm.sql`: first edit refused (`AssertionError`: the file did not load `20261202090000_lead_duplicates.sql`, which it now must since it reaches the newest migration); both added, the table in the plan's counts, the two writes among those a closing firm refuses. Green.
+3. `messageTemplates.test.ts` (3), `MessageTemplates.test.tsx` (2), and two new cases in `FollowUpOrWithdraw.test.tsx` (a reply; a firm's template with its fields filled). Green on first run; the existing composer suites unchanged.
+
+## Slice E: mutation run
+
+Each rule broken in its migration, its test run, the migration put back. All eight red:
+
+| Broken | Test |
+|---|---|
+| Any member sets a template | templates_and_reply |
+| A reply waits for a link | templates_and_reply |
+| A reply on a closed quote request | templates_and_reply |
+| A reply on another firm's quote request | data_isolation |
+| Anyone changes a member | roles_teams_visibility |
+| A lead the person may not see is named | lead_duplicates |
+| An agent imports | import |
+| A lead undoes another person's import | import |
+
+## Reports (BR-6.1, CRM-R1.1 to R1.3): reports.sql, 20261204090000_reports.sql, reports.spec.ts
+
+1. `supabase/tests/reports.sql`, 8 cases, written with the migration. Red, in turn: `three open, worth 5,000 gave 3/5000.00` and `by owner gave ada@example.test=2` (the test's own expectations: a sum's scale, and a person's name is their address here); then `a longer period reaches the older ones ... gave 2/2, expected 2/3`, a fixture I had dropped while editing. No change to the function was needed. One thing learned before writing it: an opportunity is won only through its intake's pipeline, so the fixture wins a search that way.
+2. `data_isolation.sql` with `firm_reports` listed, classed and probed with two firms. `report_limits` is closed to the API as the other limit functions are.
+3. `reports.test.ts` (6) and `ReportsPage.test.tsx` (10) before wiring; green on first run. `typecheck:app` red on four lines of `reportsApi.ts` (zod objects are optional under this project's settings): each list is mapped field by field.
+4. The full unit run: three red in `AdvisorSettingsClose.test` and `AdvisorSettingsLeave.test` (`Found multiple elements with the role "alert"`): Settings gained the owner's templates section, whose read those files did not stand in for. Given a quiet stand-in, as the sections before it were. `WorkspaceShell.test`: Reports now opens `/reports`, changed on purpose.
+
+5. `e2e/reports.spec.ts`: an owner opens Reports in a new firm, then with records in it, in a browser against the real function. Green on first run.
+
+### Reports: mutation run
+
+Each rule broken in `20261204090000_reports.sql`, its test run, the migration put back. All five red: an agent counts everyone's searches (reports); an agent reads commission (reports); won and lost ignores the period (reports); another firm's searches are counted (reports); anyone reads a firm's reports (data_isolation).
+
+### Slice E (templates, replies) and slice F: the gate
+
+`npm run lint` (0 errors), `typecheck:functions`, `typecheck:app`, `npm test` (380 files, 7,526 tests), `npm run build`, `supabase/tests/run.sh` (144 passed), `npx playwright test` (38 passed).
+
+## Leads in the menu's search (BR-5.4, part): search_leads.sql, 20261205090000_search_leads.sql
+
+1. `supabase/tests/search_leads.sql`, 3 cases, with the migration. Cases 1 and 2 green; case 3 red twice on the fixture, not the function: `leads_converted_has_when`, then `A lead is converted only into an account` (the guard). The fixture now converts its lead as the table's owner with the guard off.
+2. `data_isolation.sql` passed with the function listed, classed and probed.
+3. `MenuSearch.test.tsx`, two new cases. Red: `Unable to find role="region" and name "Leads"`: the test's stand-in for the main search answered for another word, so nothing was shown. The stand-in answers for the word typed; green.
+4. Mutation run, all three red: an agent finds everyone's leads; another firm's leads are found; a binned lead is found.
+
+## Labels on the leads table (BR-5.4, issue 245): lead_labels_column.sql, 20261206090000_lead_labels_column.sql
+
+1. `supabase/tests/lead_labels_column.sql`, 4 cases, with the migration. Cases 1 to 3 (the column, the filter, the sort) green on first run. Case 4 red: `invalid input syntax for type json`, the test's own: `leads_view_counts` answers rows, not JSON. The test reads its rows; green.
+2. `leadsApi.test.ts`: the row-shape test read the type's columns from the migration that made it, so it now adds each column a later migration gives the type. `LeadsPage` fixtures given `labels`. `leadsTable.test.tsx` (3 cases) written with the column; green.
+3. Mutation run, all three red: a lead shows every label on the firm's leads; the Label filter matches nothing; sorting by label does nothing.

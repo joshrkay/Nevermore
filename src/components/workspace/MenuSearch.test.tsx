@@ -15,6 +15,8 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: auth.userId, e
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 const client = { searchRecords: vi.fn(), myRecentRecords: vi.fn() };
+const leadClient = { searchLeads: vi.fn() };
+vi.mock("@/lib/leadSearchApi", () => ({ searchLeads: (...a: unknown[]) => leadClient.searchLeads(...a) }));
 vi.mock("@/lib/searchApi", async () => ({ ...(await vi.importActual<object>("@/lib/searchApi")), ...client }));
 const create = { createAccount: vi.fn(), listAccountOwners: vi.fn() };
 vi.mock("@/lib/accountCreateApi", async () => ({ ...(await vi.importActual<object>("@/lib/accountCreateApi")), ...create }));
@@ -55,6 +57,7 @@ const pause = () => act(async () => { await new Promise((r) => setTimeout(r, MEN
 beforeEach(() => {
   client.searchRecords.mockReset().mockResolvedValue(found());
   client.myRecentRecords.mockReset().mockResolvedValue([]);
+  leadClient.searchLeads.mockReset().mockImplementation(async (_firm: string, q: string) => ({ query: q, rows: [], more: false }));
   create.createAccount.mockReset();
   auth.signOut.mockReset();
   auth.userId = "u1";
@@ -325,5 +328,36 @@ describe("the menu's search box: who is signed in", () => {
     await user.type(box(), "\u{1F600}");
     await pause();
     await waitFor(() => expect(client.searchRecords).toHaveBeenCalledWith("f1", "\u{1F600}\u{1F600}"));
+  });
+});
+
+describe("the menu's search box: leads", () => {
+  const nothingElse = (query: string) => ({ query, accounts: none, contacts: none, opportunities: none, quotes: none });
+  // Break caught: a lead that can't be found from the box, one that opens the wrong page, or "Nothing matches" said when only a lead matches.
+  it("lists the leads found under their own heading, each opening its page, and doesn't say Nothing matches", async () => {
+    leadClient.searchLeads.mockImplementation(async (_firm: string, q: string) => ({ query: q, more: false, rows: [{ id: "l1", name: "Dana Cole", business: "Cole Plumbing", email: "dana@cole.example", status: "working" }] }));
+    client.searchRecords.mockResolvedValue(nothingElse("dana"));
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "dana");
+    await pause();
+    const group = await within(results()).findByRole("region", { name: "Leads" });
+    expect(leadClient.searchLeads).toHaveBeenCalledWith("f1", "dana");
+    expect(within(group).getByRole("link", { name: /Dana Cole/ })).toHaveAttribute("href", "/leads/l1");
+    expect(within(group).getByText(/Cole Plumbing · dana@cole.example/)).toBeInTheDocument();
+    expect(within(results()).queryByText("Nothing matches")).not.toBeInTheDocument();
+  });
+
+  // Break caught: a failed lead search taking the other kinds' results with it.
+  it("shows the other kinds as usual when the leads can't be read", async () => {
+    leadClient.searchLeads.mockRejectedValue(new Error("Couldn't search leads."));
+    client.searchRecords.mockResolvedValue(nothingElse("zzzz"));
+    const user = userEvent.setup();
+    renderBox();
+    await user.type(box(), "zzzz");
+    await pause();
+    expect(await within(results()).findByText("Nothing matches")).toBeInTheDocument();
+    expect(within(results()).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(results()).queryByRole("region", { name: "Leads" })).not.toBeInTheDocument();
   });
 });

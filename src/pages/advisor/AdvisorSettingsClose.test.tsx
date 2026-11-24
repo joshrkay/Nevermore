@@ -6,6 +6,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // replaced, by a small one that answers the way request_firm_closure, withdraw_firm_closure and my_firm_closure do: only an owner asks, the
 // firm's name must be typed, one request is open at a time, and an open request is shown to the firm's members with when it closes.
 const auth = { user: { id: "u1", email: "sam@acme.example" }, session: { access_token: "tok" }, loading: false, isAnonymous: false, sessionEnded: null, signOut: vi.fn() };
+// Slice A's sections on this page (BR-1.3, BR-1.4, BR-2.2) read through src/lib/marketApi; their own tests are beside them, so here they read nothing.
+// The daily summary section (BR-3.3) reads through src/lib/summaryApi; its own test is beside it, so here it reads a quiet answer.
+vi.mock("@/lib/summaryApi", () => ({ loadMySummarySettings: () => Promise.resolve({ dailySummary: true, timeZone: "America/New_York" }), saveMySummarySettings: () => Promise.resolve() }));
+// The owner's message templates (BR-3.5) are their own component's to test: here they load quietly, with none.
+vi.mock("@/lib/templatesApi", () => ({ loadFirmTemplates: () => Promise.resolve({}), saveFirmTemplate: () => Promise.resolve() }));
+vi.mock("@/lib/marketApi", () => ({
+  LICENCE_LINE_LABELS: { life_health: "Life and health", property_casualty: "Property and casualty" },
+  loadFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminFirmLicenceRecord: () => Promise.resolve({ npn: null, licences: [], checkedAt: null, changedSinceCheck: false, canChange: false }),
+  loadAdminMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketRequests: () => Promise.resolve([]),
+  loadFirmMarketContacts: () => Promise.resolve([]),
+}));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));

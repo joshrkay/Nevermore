@@ -19,6 +19,7 @@ const renderPage = (state?: Record<string, unknown>) =>
       <Routes>
         <Route path="/broker/sign-in" element={<BrokerSignInPage />} />
         <Route path="/advisor" element={<p>Advisor queue</p>} />
+        <Route path="/home" element={<p>Home page</p>} />
         <Route path="/advisor/held" element={<p>Held mail</p>} />
         <Route path="/login" element={<p>Password sign in</p>} />
       </Routes>
@@ -109,7 +110,7 @@ describe("BrokerSignInPage", () => {
   it("sends someone already signed in to the console, but not a guest", () => {
     auth.user = { id: "u1" };
     renderPage();
-    expect(screen.getByText("Advisor queue")).toBeInTheDocument();
+    expect(screen.getByText("Home page")).toBeInTheDocument();
   });
 
   it("stays for a guest session", () => {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { HOME_PATH } from "@/data/home";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
@@ -71,7 +72,7 @@ const JoinFirmPage = () => {
         <>
           <h1 className="font-display text-2xl font-bold">You've joined {firmName}</h1>
           <p className="text-sm text-muted-foreground">You're now {joined === "lead" ? "a" : "an"} {joined} of {firmName}.</p>
-          <Link to="/advisor" className={`${button} inline-flex items-center`}>Continue</Link>
+          <Link to={HOME_PATH} className={`${button} inline-flex items-center`}>Continue</Link>
         </>
       );
     }

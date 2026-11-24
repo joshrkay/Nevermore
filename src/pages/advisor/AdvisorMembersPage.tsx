@@ -11,6 +11,7 @@ import { currentFirm } from "@/lib/currentFirm";
 import { fetchFirmMembers, liftSuspension, removeMember, suspendMember, type FirmMember, type MemberRole } from "@/lib/memberApi";
 import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
+import { RolesAndTeams } from "@/components/advisor/RolesAndTeams";
 
 type Load =
   | { kind: "loading" }
@@ -194,6 +195,11 @@ const AdvisorMembersPage = () => {
                 </table>
               </div>
             )}
+            {/* CRM-X1.1, BR-5.3: each member's role and team, the teams, and who sees what. A change there is one to the list above too. */}
+            <section aria-labelledby="roles-teams-heading" className="mt-8">
+              <h2 id="roles-teams-heading" className="font-display text-xl font-bold mb-3">Roles, teams and who sees what</h2>
+              <RolesAndTeams firmId={load.firm.id} readOnly={load.readOnly} onChanged={() => setAttempt((n) => n + 1)} />
+            </section>
           </>
         )}
       </main>

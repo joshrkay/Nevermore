@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { HOME_PATH } from "@/data/home";
 import { useNavigate, useLocation, Link, Navigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { BrandMark, Wordmark } from "@/components/BrandMark";
@@ -36,7 +37,7 @@ const AuthPage = () => {
   // Advisors are given accounts; they don't sign up here.
   const forAdvisor = routeState?.audience === "advisor";
   const forFirm = fromLocation?.pathname === "/firms/new";
-  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : forAdvisor ? "/advisor" : "/start";
+  const from = fromLocation ? `${fromLocation.pathname}${fromLocation.search ?? ""}` : forAdvisor ? HOME_PATH : "/start";
   const notice =
     routeState?.reason === "expired"
       ? "Your session expired. Sign in again to continue."

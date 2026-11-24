@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import MailboxForWriting from "@/components/mailbox/MailboxForWriting";
 import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { followUpNote, replySubject, withdrawalNote, WITHDRAWAL_REASON_LABELS, WITHDRAWAL_REASONS, type WithdrawalReason } from "@/data/peoFollowUp";
-import { followUpPeo, withdrawFromPeo, type PeoFollowUp } from "@/lib/peoFollowUpApi";
+import { fillTemplate, type FirmTemplates } from "@/data/messageTemplates";
+import { formatDay } from "@/data/quoteRequests";
+import { followUpPeo, replyToPeo, withdrawFromPeo, type PeoFollowUp } from "@/lib/peoFollowUpApi";
+import { firmTemplatesOrNone } from "@/lib/templatesApi";
 
 export interface FollowUpOrWithdrawProps {
   quoteRequestId: number;
@@ -30,12 +33,16 @@ export interface FollowUpOrWithdrawProps {
 const typed = (text: string) => text.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
 
 /**
- * Follow up and withdraw (M-2.4): a message on the PEO's own thread, from the advisor's own mailbox, opening with default text kept in code which the
- * advisor edits, to the people the PEO was last sent to. A follow-up carries a fresh link to the version already sent; a withdrawal closes the quote
- * request, revokes its link and records why, for advisors only.
+ * Reply, follow up and withdraw (M-2.4, BR-3.4): a message on the PEO's own thread, from the advisor's own mailbox, to the people the PEO was last sent
+ * to. A follow-up and a withdrawal open with the firm's own template (BR-3.5), or the text kept in code when it has none; the advisor edits either. A
+ * follow-up carries a fresh link to the version already sent; a withdrawal closes the quote request, revokes its link and records why, for advisors
+ * only; a reply is the advisor's own words and changes nothing else.
  */
+type Mode = "reply" | "follow_up" | "withdraw";
+
 const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
-  const [mode, setMode] = useState<"follow_up" | "withdraw" | null>(null);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [templates, setTemplates] = useState<FirmTemplates>({});
   const [to, setTo] = useState(p.lastSent.to.join(", "));
   const [subject, setSubject] = useState(replySubject(p.lastSent.subject, `${p.companyName}: ${p.fileId}`));
   const [note, setNote] = useState("");
@@ -44,10 +51,26 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
   const [problem, setProblem] = useState<string | null>(null);
   const { beforeSend, choice } = useFirstSend({ returnTo: p.returnTo });
 
-  const start = (m: "follow_up" | "withdraw") => {
+  // The firm's own opening text, when it has any. Unread, each message opens with ours: the composer never waits on it.
+  useEffect(() => {
+    let cancelled = false;
+    void firmTemplatesOrNone().then((t) => !cancelled && setTemplates(t));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const opening = (m: Mode) => {
+    if (m === "reply") return "";
+    const own = templates[m === "follow_up" ? "follow_up" : "withdrawal"];
+    if (own) return fillTemplate(own, { company: p.companyName, file_id: p.fileId, version: p.version, sent_on: p.sentOn ? formatDay(p.sentOn) : null, market: p.peo });
+    return m === "follow_up" ? followUpNote(p) : withdrawalNote(p);
+  };
+
+  const start = (m: Mode) => {
     setMode(m);
     setProblem(null);
-    setNote(m === "follow_up" ? followUpNote(p) : withdrawalNote(p));
+    setNote(opening(m));
   };
 
   const send = async () => {
@@ -55,6 +78,7 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
     setProblem(null);
     try {
       if (mode === "withdraw" && reason !== "") await withdrawFromPeo({ quoteRequestId: p.quoteRequestId, to: typed(to), subject, note, reason });
+      else if (mode === "reply") await replyToPeo({ quoteRequestId: p.quoteRequestId, to: typed(to), subject, note });
       else await followUpPeo({ quoteRequestId: p.quoteRequestId, to: typed(to), subject, note, issueLink: p.issueLink });
       setMode(null);
       p.onDone();
@@ -67,7 +91,7 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
 
   // The fresh link is built from the card's plan, the last certified version: only that version is followed up (a newer one is an update, M-2.3).
   const followUpOk = p.version !== null && p.version === p.certifiedVersion;
-  const title = mode === "withdraw" ? `Withdraw from ${p.peo}` : `Follow up with ${p.peo}`;
+  const title = mode === "withdraw" ? `Withdraw from ${p.peo}` : mode === "reply" ? `Reply to ${p.peo}` : `Follow up with ${p.peo}`;
   return (
     <div className="space-y-2">
       {mode === null ? (
@@ -77,6 +101,7 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
               {`${p.peo} was sent version ${p.version ?? "on record"} and version ${p.certifiedVersion ?? "on record"} is certified since: send it an update instead of a follow-up.`}
             </p>
           )}
+          <button type="button" onClick={() => start("reply")} className="min-h-11 px-4 rounded-md border border-border text-sm font-medium">{`Reply to ${p.peo}`}</button>
           {followUpOk && <button type="button" onClick={() => start("follow_up")} className="min-h-11 px-4 rounded-md border border-border text-sm font-medium">{`Follow up with ${p.peo}`}</button>}
           <button type="button" onClick={() => start("withdraw")} className="min-h-11 px-4 rounded-md border border-border text-sm font-medium">{`Withdraw from ${p.peo}`}</button>
         </div>
@@ -102,6 +127,7 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
             <span className="text-xs text-muted-foreground">Your note</span>
             <textarea value={note} maxLength={50000} rows={6} onChange={(e) => setNote(e.target.value)} className="w-full bg-muted border border-border rounded-md px-3 py-2" />
           </label>
+          {mode === "reply" && <p className="text-xs text-muted-foreground">{`Goes on the ${p.peo} thread as you write it, with no bundle link. Nothing else changes.`}</p>}
           {mode === "withdraw" && (
             <div className="space-y-1">
               <label htmlFor={`withdraw-reason-${p.quoteRequestId}`} className="block text-xs text-muted-foreground">Why (for advisors only)</label>
@@ -119,7 +145,7 @@ const FollowUpOrWithdraw = (p: FollowUpOrWithdrawProps) => {
           )}
           {problem && <p role="alert" className="text-xs text-destructive">{problem}</p>}
           <div className="flex gap-2">
-            <button type="submit" disabled={busy || (mode === "withdraw" && reason === "")} className="min-h-11 px-4 inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-60">
+            <button type="submit" disabled={busy || (mode === "withdraw" && reason === "") || (mode === "reply" && note.trim() === "")} className="min-h-11 px-4 inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-60">
               {busy && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />} Send
             </button>
             <button type="button" onClick={() => setMode(null)} disabled={busy} className="min-h-11 px-4 rounded-md border border-border">Cancel</button>

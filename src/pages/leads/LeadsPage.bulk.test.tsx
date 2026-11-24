@@ -57,7 +57,7 @@ const workspace = (over: Partial<Workspace> = {}): Workspace => ({
 const row = (over: Partial<LeadRow> = {}): LeadRow => ({
   id: "l1", name: "Lucia Reyes", title: "Owner", business: "Reyes Bakery", email: "lucia@reyes.example", phone: null, city: "Portland", state: "OR",
   employees: 23, current_provider: null, source: "added_by_hand", status: "working", not_fit_reason: null, created_at: "2026-11-01T10:00:00Z",
-  owner: "u1", owner_name: "Dana Reyes", last_activity_at: "2026-11-11T10:00:00Z", ...over,
+  owner: "u1", owner_name: "Dana Reyes", last_activity_at: "2026-11-11T10:00:00Z", labels: [], ...over,
 });
 const rows = [row(), row({ id: "l2", name: "Min-jun Kim", business: "Kim Dental" }), row({ id: "l3", name: "Ana Solis", business: "Solis Care" })];
 export const outcome = (over: Partial<BulkOutcome> = {}): BulkOutcome => ({

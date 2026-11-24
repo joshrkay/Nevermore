@@ -92,11 +92,11 @@ describe("the workspace menu", () => {
   });
 
   // Catches: New quote missing from the menu (CRM-Q2.1: it is in the menu on every page), not first as the story's menu order has it, or Home (not built, CRM-H1) shown.
-  it("holds New quote first, then Quotes, Inbox, Leads, Accounts and Reports, then Settings, and not Home, which isn't built yet", async () => {
+  it("holds New quote first, then Home, Quotes, Inbox, Leads, Accounts and Reports, then Settings", async () => {
     await renderAt("/advisor");
-    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["New quote", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["New quote", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"]);
-    expect(screen.queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Home" })).not.toBeInTheDocument();
+    expect(within(menu()).getAllByRole("link").map((l) => l.textContent).filter((t) => ["New quote", "Home", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"].includes(t ?? ""))).toEqual(["New quote", "Home", "Quotes", "Inbox", "Leads", "Accounts", "Reports", "Settings"]);
+    // Home (CRM-H1) opens its own page.
+    expect(within(menu()).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/home");
   });
 
   // Catches: New quote opening as a page of its own that forgets where the agent was (CRM-Q2.1, D-1709: it opens over the page the agent was on, and Save and close returns there).
@@ -122,7 +122,8 @@ describe("the workspace menu", () => {
     expect(href("Inbox")).toBe("/inbox");
     expect(href("Leads")).toBe("/leads");
     expect(href("Accounts")).toBe("/accounts");
-    expect(href("Reports")).toBe("/advisor/funnel");
+    // The five reports have their own page (BR-6.1); the intake funnel is a link on it.
+    expect(href("Reports")).toBe("/reports");
     expect(href("Settings")).toBe("/settings");
   });
 
@@ -145,6 +146,7 @@ describe("the workspace menu", () => {
     ["/accounts/abc", "Accounts"],
     // An opportunity's page belongs to Accounts (CRM-O1.1b, D-421).
     ["/opportunities/abc", "Accounts"],
+    ["/reports", "Reports"],
     ["/advisor/funnel", "Reports"],
     ["/settings", "Settings"],
     ["/advisor/partners", "Settings"],
@@ -155,10 +157,10 @@ describe("the workspace menu", () => {
     expect(current()).toEqual([section]);
   });
 
-  it("puts the firm's name and address at the top, linking to the queue", async () => {
+  it("puts the firm's name and address at the top, linking to Home", async () => {
     await renderAt("/settings");
     const tile = screen.getByRole("link", { name: /Alpha Advisory/ });
-    expect(tile).toHaveAttribute("href", "/advisor");
+    expect(tile).toHaveAttribute("href", "/home");
     expect(tile).toHaveTextContent("alpha.nevermorepeo.com");
   });
 

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // replaced, by a small in-memory one that answers the way the functions do: a firm keeps its last owner, only an owner of the
 // firm lists or changes its members, a removed person is no longer listed, a suspended one is, until lifted.
 const auth = { user: { id: "u-owner", email: "owner@acme.example" }, session: { access_token: "tok-1" }, loading: false, isAnonymous: false, sessionEnded: null, signOut: vi.fn() };
+// The roles, teams and visibility section (CRM-X1.1) reads through src/lib/teamsApi; its own test is beside it, so here it reads a quiet answer.
+vi.mock("@/lib/teamsApi", () => ({ loadTeamsPage: () => Promise.resolve({ visibility: "by_level", teams: [], members: [] }) }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => auth }));
 let firmAddress: { status: "none" } | { status: "known"; address: string; name: string } = { status: "none" };
 vi.mock("@/hooks/useFirmAddress", () => ({ useFirmAddress: () => firmAddress }));

@@ -218,6 +218,7 @@
 \i supabase/migrations/20261125140000_opportunity_intake_started_by_firm.sql
 \i supabase/migrations/20261125150000_firm_started_intakes_do_not_expire.sql
 \i supabase/migrations/20261126090000_lines.sql
+\i supabase/migrations/20261127090000_sendable.sql
 SET client_min_messages = notice;
 
 CREATE TEMP TABLE fx (name text PRIMARY KEY, id uuid NOT NULL);
@@ -824,7 +825,8 @@ BEGIN
   PERFORM pg_temp.as_user('acme_agent', 'acme-brokers');
   c := public.peo_send_context(pg_temp.id('reyes'), 'Insperity');
   PERFORM pg_temp.is(c -> 'mailbox', '{"connected": true, "address": "sam@acme.example"}'::jsonb, 'the advisor''s mailbox');
-  PERFORM pg_temp.is(c -> 'contacts', '[{"name": "Dana Lee", "role": "Underwriter", "email": "dana@insperity.example"}]'::jsonb, 'the contacts in use with an email');
+  PERFORM pg_temp.is(c -> 'contacts', '[{"name": "Dana Lee", "role": "Underwriter", "email": "dana@insperity.example", "own": false}]'::jsonb,
+    'the contacts in use with an email, each marked as the profile''s and not the firm''s own (BR-1.3, supabase/tests/sendable.sql)');
   PERFORM pg_temp.is(c ->> 'reply_address',
     (SELECT a.local_part FROM public.quote_request_addresses a JOIN public.quote_requests q ON q.id = a.quote_request_id
      WHERE q.session_id = pg_temp.id('reyes') AND q.peo_name = 'Insperity' AND a.revoked_at IS NULL), 'the quote request''s reply address');

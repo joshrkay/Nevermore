@@ -8,7 +8,7 @@
 // flattened to one line (a request's message keeps its line breaks), capped, and HTML-escaped before it
 // reaches a message.
 
-export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert" | "lead_from_link" | "firm_waiting" | "firm_decision";
+export type OutboxKind = "advisor_notification" | "prospect_confirmation" | "information_request" | "draft_expiry_reminder" | "peo_mail_arrived" | "member_left" | "firm_closing" | "export_alert" | "lead_from_link" | "firm_waiting" | "firm_decision" | "market_request" | "market_answer" | "daily_summary";
 
 /** The kinds sent to the prospect's own address; the database's public.outbox_kind_reaches_prospect agrees. */
 export const PROSPECT_KINDS: readonly OutboxKind[] = ["prospect_confirmation", "information_request", "draft_expiry_reminder"];
@@ -306,6 +306,92 @@ export function parseFirmDecision(raw: unknown): FirmDecision | null {
   const address = p && oneLine(p.address, 100);
   if (!p || !recipientEmail || !firmName || !address || typeof p.approved !== "boolean") return null;
   return { recipientEmail, firmName, address, approved: p.approved, note: oneLine(p.note, 500) };
+}
+
+/** A firm asked for a PEO or carrier that isn't listed (public.queue_market_request_emails). It names no recipient: the platform admins are looked up when it is sent. */
+export interface MarketRequestNotice {
+  firmName: string;
+  marketName: string;
+  /** What it quotes: "peo", or "workers_comp" for a carrier. Anything else reads as a PEO, as the browser reads it. */
+  line: "peo" | "workers_comp";
+}
+
+/** A platform admin's answer to that request, for the person who asked. */
+export interface MarketAnswerNotice extends MarketRequestNotice {
+  recipientEmail: string;
+  /** The firm's address, as the database holds it (lower case). */
+  address: string;
+  listed: boolean;
+  answer: string | null;
+}
+
+/** One line of a daily summary: what kind it is, the record's name, what it is about, and when. */
+export interface SummaryLine {
+  kind: "new_mail" | "intake_certified" | "quote_expiring" | "intake_quiet" | "task_due" | "lead_quiet";
+  name: string | null;
+  about: string | null;
+  at: string;
+}
+
+/** What needs one member of a firm today (public.queue_daily_summaries): the first lines and how many there are in all. */
+export interface DailySummary {
+  recipientEmail: string;
+  firmName: string;
+  address: string;
+  /** The member's own day, YYYY-MM-DD, and the zone it is in. */
+  day: string;
+  timeZone: string;
+  total: number;
+  lines: SummaryLine[];
+}
+
+const marketLine = (v: unknown): "peo" | "workers_comp" => (v === "workers_comp" ? "workers_comp" : "peo");
+
+/** The request notice's fields, or null without the firm's name and the name asked for. Only these are ever read. */
+export function parseMarketRequest(raw: unknown): MarketRequestNotice | null {
+  const p = asObject(raw);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const marketName = p && oneLine(p.market_name, 80);
+  return p && firmName && marketName ? { firmName, marketName, line: marketLine(p.line) } : null;
+}
+
+/** The answer notice's fields, or null without the address to send to, the firm, the name asked for and which way it went. Only these are ever read. */
+export function parseMarketAnswer(raw: unknown): MarketAnswerNotice | null {
+  const p = asObject(raw);
+  const request = parseMarketRequest(raw);
+  const recipientEmail = p && asEmail(p.recipient_email);
+  const address = p && oneLine(p.address, 100);
+  if (!p || !request || !recipientEmail || !address || typeof p.listed !== "boolean") return null;
+  return { ...request, recipientEmail, address, listed: p.listed, answer: oneLine(p.answer, 500) };
+}
+
+const SUMMARY_KINDS = ["new_mail", "intake_certified", "quote_expiring", "intake_quiet", "task_due", "lead_quiet"] as const;
+const SUMMARY_DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** As many lines as the database puts in one summary (public.queue_daily_summaries); more than this is not read. */
+export const SUMMARY_MAX_LINES = 20;
+
+/**
+ * The daily summary's fields, or null without the address to send to, the firm, the day and at least one line that can be read. A line of a kind this
+ * build does not know, or with no time, is left out and the rest still go: the count of all of them is the database's.
+ */
+export function parseDailySummary(raw: unknown): DailySummary | null {
+  const p = asObject(raw);
+  const recipientEmail = p && asEmail(p.recipient_email);
+  const firmName = p && oneLine(p.firm_name, 200);
+  const address = p && oneLine(p.address, 100);
+  const day = p && typeof p.day === "string" && SUMMARY_DAY.test(p.day) ? p.day : null;
+  const timeZone = (p && oneLine(p.time_zone, 64)) || "UTC";
+  if (!p || !recipientEmail || !firmName || !address || !day || !Array.isArray(p.lines)) return null;
+  const lines: SummaryLine[] = [];
+  for (const item of p.lines.slice(0, SUMMARY_MAX_LINES)) {
+    const l = asObject(item);
+    const kind = l && SUMMARY_KINDS.find((k) => k === l.kind);
+    if (!l || !kind || typeof l.at !== "string" || !Number.isFinite(Date.parse(l.at))) continue;
+    lines.push({ kind, name: oneLine(l.name, 200), about: oneLine(l.about, 200), at: l.at });
+  }
+  if (lines.length === 0) return null;
+  const total = typeof p.total === "number" && Number.isInteger(p.total) && p.total >= lines.length ? p.total : lines.length;
+  return { recipientEmail, firmName, address, day, timeZone, total, lines };
 }
 
 /** The confirmation's fields, or null without a usable reference and recipient address. */
@@ -682,6 +768,88 @@ ${button(ctx.firmUrl, "Open your firm")}
 <p style="margin:0 0 4px;font-weight:bold;">What happens next</p>
 <p style="margin:0 0 16px;">${escapeHtml(next)}</p>
 ${small(support)}`,
+  );
+  return { subject, text, html };
+}
+
+const marketWord = (line: "peo" | "workers_comp") => (line === "workers_comp" ? "workers' comp carrier" : "PEO");
+
+/** The email to every platform admin when a firm asks for a PEO or carrier that isn't listed: who asked, for what, and a link to the PEOs page where it is answered. */
+export function renderMarketRequest(n: MarketRequestNotice, ctx: { peosUrl: string }): RenderedEmail {
+  const headline = `${n.firmName} asked for a ${marketWord(n.line)} that isn't listed: ${n.marketName}.`;
+  const subject = `${n.firmName} asked for ${n.marketName}`;
+  const details: [string, string][] = [["Firm", n.firmName], ["Asked for", n.marketName], ["What it quotes", n.line === "workers_comp" ? "Workers' comp" : "PEO"]];
+  const footnote = "Opening the page needs your admin sign-in. The firm reads your answer there, and the person who asked is emailed it.";
+  const text = [headline, "", ...details.map(([label, value]) => `${label}: ${value}`), "", "Answer it:", ctx.peosUrl, "", footnote, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+<table style="border-collapse:collapse;margin:0 0 20px;">${details.map(([l, v]) => row(l, v)).join("")}</table>
+${button(ctx.peosUrl, "Open the PEOs page")}
+${small(footnote)}`,
+  );
+  return { subject, text, html };
+}
+
+/** The email to the person who asked, with the answer: listed, with a link to the firm's PEOs page, or not, with the reason given. */
+export function renderMarketAnswer(n: MarketAnswerNotice, ctx: { peosUrl: string; supportEmail: string }): RenderedEmail {
+  const subject = n.listed ? `${n.marketName} is now listed on ${BRAND}` : `Your request for ${n.marketName} on ${BRAND}`;
+  const headline = n.listed
+    ? `${n.marketName} is now listed, so ${n.firmName} can send to it once the employer authorizes it.`
+    : `${n.marketName} was not added to the list.`;
+  const said = n.answer ? `What we noted: ${n.answer}` : null;
+  const support = `Questions? Write to ${ctx.supportEmail}.`;
+  const text = [headline, "", ...(said ? [said, ""] : []), "Your firm's requests:", ctx.peosUrl, "", support, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>${said ? `<p style="margin:0 0 16px;">${escapeHtml(said)}</p>` : ""}
+${button(ctx.peosUrl, "Open the PEOs page")}
+${small(support)}`,
+  );
+  return { subject, text, html };
+}
+
+const SUMMARY_KIND_WORDS: Record<SummaryLine["kind"], string> = {
+  new_mail: "New mail", intake_certified: "Intake certified", quote_expiring: "Quote expiring", intake_quiet: "Intake quiet", task_due: "Task due", lead_quiet: "Lead quiet",
+};
+
+/** A line's day, in the member's own zone: "Dec 4". A zone the runtime does not know falls back to UTC, so a line is never dropped for its zone. */
+function summaryDay(at: string, timeZone: string): string {
+  const options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  try {
+    return new Date(at).toLocaleDateString("en-US", { ...options, timeZone });
+  } catch {
+    return new Date(at).toLocaleDateString("en-US", { ...options, timeZone: "UTC" });
+  }
+}
+
+/** One line as a sentence: "Quote expiring: Reyes Bakery, Harbor PEO (Dec 4)". */
+export function summaryLineWords(l: SummaryLine, timeZone: string): string {
+  const what = [l.name, l.about].filter((v): v is string => !!v).join(", ");
+  return `${SUMMARY_KIND_WORDS[l.kind]}: ${what || "a record"} (${summaryDay(l.at, timeZone)})`;
+}
+
+/**
+ * The daily summary to one member: what needs them in the firm today, each line a record's name and what it is about, how many more there are, a link to
+ * Home, and where to turn the email off. It names records and never holds an intake's answers.
+ */
+export function renderDailySummary(n: DailySummary, ctx: { homeUrl: string; settingsUrl: string }): RenderedEmail {
+  const things = n.total === 1 ? "1 thing needs you" : `${n.total} things need you`;
+  const subject = `${things} at ${n.firmName}`;
+  const headline = `${things} at ${n.firmName} today.`;
+  const lines = n.lines.map((l) => summaryLineWords(l, n.timeZone));
+  const more = n.total > n.lines.length ? `And ${n.total - n.lines.length} more on Home.` : null;
+  const footnote = "You get this on weekday mornings when something needs you. Turn it off, or change your time zone, in Settings:";
+  const text = [headline, "", ...lines.map((l) => `- ${l}`), ...(more ? ["", more] : []), "", "Open Home:", ctx.homeUrl, "", footnote, ctx.settingsUrl, "", SIGN_OFF].join("\n");
+  const html = layout(
+    subject,
+    headline,
+    `<p style="margin:0 0 16px;">${escapeHtml(headline)}</p>
+<ul style="margin:0 0 16px;padding-left:20px;">${lines.map((l) => `<li style="margin:0 0 6px;">${escapeHtml(l)}</li>`).join("")}</ul>
+${more ? `<p style="margin:0 0 16px;">${escapeHtml(more)}</p>` : ""}${button(ctx.homeUrl, "Open Home")}
+${small(`${footnote} ${ctx.settingsUrl}`)}`,
   );
   return { subject, text, html };
 }

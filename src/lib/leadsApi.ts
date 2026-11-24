@@ -10,7 +10,7 @@ import type { TableFields, TableFilter, TablePage, TableSort, ViewCount } from "
 
 /**
  * The leads table's fields a filter or a sort may name, with the kind of each. The database holds the same list (leads_field_kind's `leads_fields` block;
- * src/lib/leadsApi.test.ts compares them) and refuses any other. Email and phone have no sort (CRM-L1.1). Labels arrive with slice 8.4, custom fields with Epic 9.
+ * src/lib/leadsApi.test.ts compares them) and refuses any other. Email and phone have no sort (CRM-L1.1). `labels` is the firm's own words on a lead (20261206090000_lead_labels_column.sql); a filter names them as text. Custom fields come with Epic 9.
  */
 export const LEAD_FIELDS = {
   name: "text",
@@ -26,6 +26,7 @@ export const LEAD_FIELDS = {
   status: "choice",
   not_fit_reason: "choice",
   owner: "person",
+  labels: "choices",
 } as const satisfies TableFields;
 
 export type LeadField = keyof typeof LEAD_FIELDS;
@@ -59,12 +60,14 @@ export interface LeadRow {
   owner_name: string | null;
   /** The newest of its calls, notes and tasks, or when it was made (D-814). */
   last_activity_at: string;
+  /** The firm's labels on the lead, in order; none is an empty list. */
+  labels: string[];
 }
 
 // The row's columns in the database's order (leads_row; src/lib/leadsApi.test.ts compares them): a column the type gains is a compile error here.
 const ROW_COLUMNS: Record<keyof LeadRow, true> = {
   id: true, name: true, title: true, business: true, email: true, phone: true, city: true, state: true, employees: true, current_provider: true,
-  source: true, status: true, not_fit_reason: true, created_at: true, owner: true, owner_name: true, last_activity_at: true,
+  source: true, status: true, not_fit_reason: true, created_at: true, owner: true, owner_name: true, last_activity_at: true, labels: true,
 };
 export const LEAD_ROW_KEYS = Object.keys(ROW_COLUMNS) as (keyof LeadRow)[];
 
@@ -74,7 +77,7 @@ const count = z.number().int().min(0);
 const rowSchema = z.object({
   id: text, name: text, title: maybeText, business: maybeText, email: maybeText, phone: maybeText, city: maybeText, state: maybeText,
   employees: count.nullable(), current_provider: maybeText, source: z.enum(LEAD_SOURCES), status: z.enum(LEAD_STATUSES),
-  not_fit_reason: z.enum(LEAD_NOT_FIT_REASONS).nullable(), created_at: text, owner: maybeText, owner_name: maybeText, last_activity_at: text,
+  not_fit_reason: z.enum(LEAD_NOT_FIT_REASONS).nullable(), created_at: text, owner: maybeText, owner_name: maybeText, last_activity_at: text, labels: z.array(text),
 });
 const pageSchema = z.object({ rows: z.array(rowSchema), total: count, page: z.number().int().min(1), page_size: z.number().int().min(1) });
 const countsSchema = z.array(z.object({ view_name: text, total: z.union([count, z.string().regex(/^\d+$/).transform(Number)]) }));

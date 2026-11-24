@@ -224,6 +224,18 @@ _Avoid_: ready for a PEO, ready to send, ready
 A person at a PEO that a **Requirement profile** version names: their name, role, work email and phone. Read by advisors only, never by prospects.
 _Avoid_: rep, PEO rep, underwriter (an underwriter is one kind of PEO contact)
 
+**Firm's contact** (code: `firm_market_contacts`, `add_firm_market_contact`, `FirmMarketContacts`; BR-1.3, D-2100 to D-2103):
+A person one firm deals with at a listed PEO or carrier: their name, an email address, and a role and phone when given. It is the firm's own: every member of the firm reads it, any member adds or removes one, and no other firm sees it. A firm keeps at most ten at one PEO or carrier. When that firm sends there, its own contacts are offered first and the **PEO contacts** of the profile in use after them; an address the firm keeps is offered once, as the firm names it. Kept on the PEOs page, under the PEO or carrier.
+_Avoid_: my contact (it is the firm's), PEO contact (that is the profile's, the same for every firm), contact on its own (a **Contact** is a person at an account)
+
+**Request for a PEO or carrier** (code: `market_requests`, `request_market`, `admin_answer_market_request`, `AskForMarket`; BR-1.4, D-2104 to D-2106):
+A firm's ask for a PEO or carrier that isn't listed: its name, what it quotes, and, when given, who the firm deals with there and a note. Any member asks, on the PEOs page; the firm reads its own requests and no other firm's. A platform admin answers each once: listed, naming the PEO or carrier on the list it now is, or not, with the reason the firm reads. One open request for a name and line by a firm at a time.
+_Avoid_: market request (on a screen), suggestion, ticket
+
+**Licences on record** (code: `firm_licences`, `firm_licence_records`, `FirmLicences`; BR-2.2, Q-1.1, D-2107 to D-2112):
+What a firm says it is licensed for: its National Producer Number, and each state and line (life and health, or property and casualty) with the licence number and expiry when given. An owner keeps them in Settings; every member reads them; a platform admin reads them beside the decision on the firm and records that they were checked. A record changed after that reads "Changed since Nevermore checked them". A send to a carrier is refused unless a property and casualty licence that has not expired is on record. They are what the firm stated: the product looks nothing up, and which states a licence must cover is counsel's to say.
+_Avoid_: verified licence, licensed (of a firm, as a fact the product knows)
+
 **Advisor follow-up**:
 A field an advisor has marked as needing more from the prospect. It belongs to the advisor's review, not to the prospect's open items. It reaches the prospect only through an information request, which starts out naming the fields marked this way.
 _Avoid_: open item, flag
@@ -906,6 +918,42 @@ _Avoid_: revert, rollback
 **Call**, **Note**, **Task**:
 What an agent logs on an account, a contact or an opportunity (later on a lead). A call records who with, about what, when, the outcome and what was said, and logging one can add a follow-up task in the same step. A note can be edited only by the person who wrote it and only for 24 hours; after that it is fixed, and "Add to note" appends a dated addition. A task says what, for which member and when it is due, and is open or done; anyone who may see its record can mark it done.
 _Avoid_: activity (on its own), quote request note (a note on one PEO's quote request is a different record)
+
+**Reports** (code: `firm_reports`, `ReportsPage`; BR-6.1, CRM-R1.1 to R1.3, D-2400 to D-2412):
+Five views of the firm beside the intake funnel: the **Pipeline** (what is open now, by stage and owner), **Quotes by market** (sent, quoted, declined and why, days to a quote, placed), **Won and lost**, **Renewals** (due by month, and how the period's ended) and, for an owner, **Commission** (expected against received). One set of controls applies to all: a period, whose work, a line. Each is worked out when asked from the records the person may see, and is never a stored copy; each lists the records its figures count.
+_Avoid_: dashboard (Home is the page of what needs a person), analytics, report builder (there is none)
+
+**Message template** (code: `firm_message_templates`, `MessageTemplates`; BR-3.5, P-3.2, D-2350 to D-2354):
+What a firm's messages to a PEO or carrier open with, one for each kind: a first send, a **Follow-up**, a withdrawal. An owner keeps them in Settings; a kind with none opens with the product's own text. It may name the employer, the File ID, the version, the day sent and the PEO or carrier, each filled in when the message is opened. Whoever sends still edits the words, and what the product adds under a message (the link and what it opens) is never part of one.
+_Avoid_: canned response, snippet, signature
+
+**Reply** (on a PEO's or carrier's thread; code: `reply_to_peo`, `FollowUpOrWithdraw`; BR-3.4, M-3.5, D-2355 to D-2358):
+An advisor's own words on the thread of a quote request the product sent, from their connected mailbox, with no bundle link. It changes nothing else: no status, no link. A **Follow-up** carries a fresh link and a withdrawal closes the quote request; a reply does neither.
+_Avoid_: response (a PEO's response is a quote or a decline), message (any email on the thread)
+
+**Import** (code: `imports`, `import_rows`, `ImportPage`; story CRM-X4.1, BR-5.1, D-2300 to D-2319):
+Bringing leads, or accounts with their contacts, into a firm from a CSV file, by an owner or a lead. The person matches each column of the file to a field, reads a **Review**, and imports. Each row makes one record, by the rules a record made by hand is held to; a row whose record is already here makes nothing, and neither does one that breaks a rule, and each says why. An import is one batch: it is listed with who ran it and when, and can be undone as a whole for 30 days. It contacts nobody, and the file is read in the browser and never kept.
+_Avoid_: upload (a document is uploaded), sync, migration
+
+**Review** (of an import):
+What an import would do, said before it is run: how many rows would make a record, how many are already here, and which can't be imported and why, each by its row number in the person's file. It is worked out by the import's own rules and makes nothing.
+_Avoid_: preview, dry run, validation
+
+**Home** (story CRM-H1, BR-3.1):
+The first page a member of a firm opens: what needs them, the firm's counts, renewals coming up, open opportunities by stage and their upcoming tasks. Every firm's members land on it, Edgar Allan Advisory's included; the Submissions queue is reached from Quotes.
+_Avoid_: dashboard (the advisory team's funnel was called that), the queue
+
+**Needs you**:
+Home's list of what a member should act on, newest first: new mail from a PEO or a contact, an intake certified, a quote expiring within 14 days, an intake with nothing new for 7 days, a task due today or overdue, a lead with no activity for 7 days. Not **Needs advisor action**, which is a mark an advisor puts on one submission by hand.
+_Avoid_: notifications, alerts, to-do list
+
+**Upcoming tasks**:
+Home's panel of the open tasks due in the next 14 days, for whoever Home is showing. A task due today or overdue is in **Needs you** as well.
+_Avoid_: My tasks (there is no page of that name)
+
+**Daily summary**:
+The product's own email to one member, Monday to Friday in the morning of that member's own time zone, saying what **Needs you** holds for them. Sent only when there is something in it. Every member gets it unless they turn it off. It names records and never holds an intake's answers, a census or a FEIN.
+_Avoid_: morning summary, digest, reminder (a **Draft reminder** goes to a prospect), alert (an **Advisor Alert** is a new submission)
 
 **Follow-up task**:
 The task a call can add as it is logged, saved in the same step as the call and on the same account, contact and opportunity. Both are saved or neither is. For the person logging it unless another member is chosen.

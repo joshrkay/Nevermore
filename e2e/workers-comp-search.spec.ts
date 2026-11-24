@@ -141,6 +141,20 @@ test("a workers' comp search is made, sent to a carrier, quoted with a premium a
         data: { p_session_id: intakeId, p_peo: market, p_to: ["underwriting@granite.example"], p_subject: `${ACCOUNT}: ${FILE_ID}`, p_note: "Here is Saltmarsh Bakery." },
       });
       expect((await send(PEO)).status()).toBe(400);
+      // BR-2.2: with no property and casualty licence on record the send to the carrier is refused, in words the composer shows, and records nothing.
+      const unlicensed = await send(CARRIER);
+      expect(unlicensed.status()).not.toBe(200);
+      expect(await unlicensed.text()).toContain("Your firm has no property and casualty licence on record.");
+      expect((await withDb((c) => c.query("SELECT count(*)::int AS n FROM public.quote_requests WHERE session_id = $1", [intakeId]))).rows).toEqual([{ n: 0 }]);
+      // The founder, an owner, records the firm's licence in Settings; the page then stops saying nothing can be sent to a carrier.
+      await page.goto(`${firmUrl(ADDRESS)}/settings`);
+      const licences = page.getByRole("region", { name: "Licences" });
+      await expect(licences.getByText("No property and casualty licence is on record, so nothing can be sent to a carrier yet.")).toBeVisible();
+      await licences.getByLabel("State (required)").fill("tx");
+      await licences.getByRole("button", { name: "Add licence" }).click();
+      await expect(licences.getByRole("list", { name: "Licences on record" })).toContainText("TX · Property and casualty");
+      await expect(licences.getByText("No property and casualty licence is on record, so nothing can be sent to a carrier yet.")).toHaveCount(0);
+      await page.goto(`${firmUrl(ADDRESS)}/opportunities/${opportunityId}`);
       const sent = await send(CARRIER);
       expect(sent.status(), await sent.text()).toBe(200);
       quoteRequestId = ((await sent.json()) as { quote_request_id: number }).quote_request_id;

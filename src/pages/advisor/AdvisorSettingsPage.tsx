@@ -15,6 +15,9 @@ import { refreshFirmClosure, useFirmClosure } from "@/hooks/useFirmClosure";
 import { LoadFailed } from "@/components/workspace/states";
 import { SaveFailed } from "@/components/workspace/form";
 import RegistrationStatement from "@/components/advisor/RegistrationStatement";
+import { MessageTemplates } from "@/components/advisor/MessageTemplates";
+import { FirmLicences } from "@/components/advisor/FirmLicences";
+import { DailySummarySettings } from "@/components/advisor/DailySummarySettings";
 
 /**
  * Settings (story CRM-S1.1a, D-38): where the pages that have no menu item of their own are reached from. Each is a link to a
@@ -55,7 +58,7 @@ const closeBody = (firmName: string) =>
   `The firm's owners are emailed now. Nevermore keeps a record of what was deleted, when, and on whose request, without any of the content.`;
 
 const AdvisorSettingsPage = () => {
-  const { isOwner, isSupport, firm } = useWorkspace();
+  const { isOwner, isSupport, firm, role } = useWorkspace();
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -116,7 +119,8 @@ const AdvisorSettingsPage = () => {
 
   const atAddress = useFirmAddress().status === "known";
   // Nevermore support reads the pages an owner reads, and is offered nothing it could not use (story CRM-P2.4).
-  const links = SETTINGS_LINKS.filter((l) => !l.ownersOnly || isOwner || isSupport);
+  // Import changes the firm's records, so a support session, which only looks, is not offered it.
+  const links = SETTINGS_LINKS.filter((l) => (l.ownersAndLeads ? isOwner || role === "Lead" : !l.ownersOnly || isOwner || isSupport));
   return (
     <main className="container mx-auto px-6 py-8 max-w-3xl">
       <h1 className="font-display text-3xl font-bold mb-6">Settings</h1>
@@ -133,6 +137,30 @@ const AdvisorSettingsPage = () => {
         <section aria-labelledby="registrations-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 id="registrations-heading" className="font-semibold">Registrations with PEOs</h2>
           <RegistrationStatement firmId={firm.id} />
+        </section>
+      )}
+
+      {/* BR-3.3: the person's own daily summary, on or off, and their time zone. Not a support session's to set for anyone. */}
+      {firm && !isSupport && (
+        <section aria-labelledby="summary-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="summary-heading" className="font-semibold mb-2">Daily summary</h2>
+          <DailySummarySettings />
+        </section>
+      )}
+
+      {/* BR-3.5: what the firm's messages to a PEO or carrier open with. An owner's to keep. */}
+      {firm && isOwner && !isSupport && (
+        <section aria-labelledby="templates-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="templates-heading" className="font-semibold mb-2">Message templates</h2>
+          <MessageTemplates firmId={firm.id} />
+        </section>
+      )}
+
+      {/* BR-2.2: the firm's producer number and licences on record. An owner keeps them; every member reads them. */}
+      {firm && !isSupport && (
+        <section aria-labelledby="licences-heading" className="mt-8 rounded-lg border border-border bg-card p-4">
+          <h2 id="licences-heading" className="font-semibold mb-2">Licences</h2>
+          <FirmLicences firmId={firm.id} />
         </section>
       )}
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { HOME_PATH } from "@/data/home";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { LogOut, Menu as MenuIcon, ShieldCheck } from "lucide-react";
 import LegalLinks from "@/components/LegalLinks";
@@ -62,7 +63,7 @@ const MenuBody = () => {
     <>
       {isMobile && <SheetTitle className="sr-only">Menu</SheetTitle>}
       <SidebarHeader className="p-3">
-        <Link to="/advisor" onClick={close} className="flex items-center gap-3 rounded-md p-1 outline-none ring-sidebar-ring focus-visible:ring-2">
+        <Link to={HOME_PATH} onClick={close} className="flex items-center gap-3 rounded-md p-1 outline-none ring-sidebar-ring focus-visible:ring-2">
           <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-semibold text-sidebar-primary-foreground">
             {firm ? initial(firm.name) : ""}
           </span>

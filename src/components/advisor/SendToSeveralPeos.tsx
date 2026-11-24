@@ -5,6 +5,7 @@ import { useFirstSend } from "@/components/mailbox/useFirstSend";
 import { failureWords } from "@/components/workspace/form";
 import { WorkspaceContext } from "@/components/workspace/workspaceContext";
 import { MARKET_WORDS, type QuoteLine } from "@/data/lines";
+import { fillTemplate } from "@/data/messageTemplates";
 import { FIT_WORDS, NOT_MET_NOTE, fitOutcome, peoFit, type FitStatus, type PeoRecord } from "@/data/peoCatalog";
 import { groupByCompleteness, type CertifiedVersion, type PeoCompletenessEntry } from "@/data/peoCompleteness";
 import { localToday } from "@/data/peoProfiles";
@@ -16,6 +17,7 @@ import { bundleSummary, planBundle, type BundleSource } from "@/data/submissionB
 import { peoLinkIssuer } from "@/lib/peoLinkIssuer";
 import { loadPeoSendContext, sendToPeo, type PeoSendContext } from "@/lib/peoSendApi";
 import { fetchFirmApprovedToSend } from "@/lib/firmApi";
+import { firmTemplatesOrNone } from "@/lib/templatesApi";
 import { loadPeoAuthorizations, type PeoAuthorizationState } from "@/lib/peoAuthorizationsApi";
 import { loadRegisteredElsewhere, type RegisteredElsewhere } from "@/lib/peoRegistrationsApi";
 import { registeredElsewhereWords } from "@/data/peoRegistrations";
@@ -136,6 +138,12 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     }, () => undefined);
     // Unread, nothing is said and nothing waits on it: the database refuses a send from a firm that isn't approved.
     if (firmId) fetchFirmApprovedToSend(firmId).then((yes) => !cancelled && setFirmApproved(yes), () => undefined);
+    // BR-3.5: the one note opens with the firm's own text when it has any, never over words already typed. It goes to several, so it names no one market.
+    void firmTemplatesOrNone(firmId ?? null).then((t) => {
+      if (cancelled || !t.send) return;
+      const text = fillTemplate(t.send, { company: p.companyName, file_id: p.fileId, version: p.certified.version, sent_on: null, market: null });
+      setNote((now) => (now === "" ? text : now));
+    });
     // Unread, there is simply no warning: no send waits on it.
     loadRegisteredElsewhere(p.sessionId).then((rows) => !cancelled && setElsewhere(rows), () => undefined);
     for (const peo of peoNames.split("\n").filter(Boolean)) {
@@ -147,7 +155,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     return () => {
       cancelled = true;
     };
-  }, [open, p.sessionId, peoNames, firmId]);
+  }, [open, p.sessionId, peoNames, firmId, p.companyName, p.fileId, p.certified.version]);
 
   // Each PEO's advisor bundle, from the last certified version: what its link carries and the open items its message lists.
   const sourceOf = (c: Choice): BundleSource => ({
@@ -166,7 +174,7 @@ const SendToSeveralPeos = (p: SendToSeveralPeosProps) => {
     if (state === "withdrawn") return `The employer withdrew ${c.peo}. Nothing more can be sent to it.`;
     if (authorizations && state !== "authorized") return `The employer hasn't authorized ${c.peo} to receive their packet. Ask them to add it.`;
     if (contexts[c.peo] === "failed") return `We couldn't load ${c.peo}'s contacts. Close this and open it again to try again.`;
-    if (contexts[c.peo] && peopleOf(c).length === 0) return `${c.peo}'s profile has no contact with an email, so there is nobody to send it to.`;
+    if (contexts[c.peo] && peopleOf(c).length === 0) return `There is nobody to send it to at ${c.peo}: its profile has no contact with an email, and your firm has none of its own there. Add your contact in Settings, under PEOs.`;
     return null;
   };
   // The employer as the agent says them: the certifier's first name.

@@ -214,11 +214,11 @@ describe("SendToSeveralPeos", () => {
       await waitFor(() => expect(loadPeoSendContext).toHaveBeenCalledTimes(3));
       fireEvent.click(within(region).getByRole("button", { name: "Review" }));
       const oasis = (await within(region).findByRole("heading", { name: "Oasis" })).closest("article")!;
-      expect(oasis).toHaveTextContent("Won't be sent: Oasis's profile has no contact with an email, so there is nobody to send it to.");
+      expect(oasis).toHaveTextContent("Won't be sent: There is nobody to send it to at Oasis: its profile has no contact with an email, and your firm has none of its own there. Add your contact in Settings, under PEOs.");
       fireEvent.click(within(region).getByRole("button", { name: "Send to 1 PEO" }));
       expect(await result(region)).toEqual([
         "Justworks: Sent. It is on the Justworks thread.",
-        "Oasis: Not sent. Oasis's profile has no contact with an email, so there is nobody to send it to.",
+        "Oasis: Not sent. There is nobody to send it to at Oasis: its profile has no contact with an email, and your firm has none of its own there. Add your contact in Settings, under PEOs.",
       ]);
       expect(sendToPeo).toHaveBeenCalledTimes(1);
     } finally {
