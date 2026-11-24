@@ -1113,3 +1113,7 @@ Not the cycle-by-cycle record the sections above are. The tests were written bef
 One stayed green: a declined answer still naming a market (the screen never sends one). `marketApi.test.ts` now declines with a market chosen and expects none sent; red under the break.
 
 Not mutated: the two-firm probes and registries in `data_isolation.sql` (the gate's own cases prove it fails on an unregistered table and an unprobed function), `types.ts`.
+
+### Gate (Sendable)
+
+lint 0 errors (19 warnings, all older); typecheck:functions and typecheck:app clean; `npm test` 368 files, 7410 tests passed; build green; `supabase/tests/run.sh`: All 134 SQL tests passed; `npm run test:e2e`: 36 passed. The verify harness was not run: nothing in the submission-notification pipeline changed.
