@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { LeadDuplicateWarning } from "./LeadDuplicateWarning";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -94,6 +95,7 @@ export function NewLeadDialog({ firmId, person, onClose, onCreated }: {
     failureMessage: "Couldn't save the lead. Check your connection and try again.",
     onCancel: onClose,
   });
+  const typed = api.form.watch(["name", "business", "email", "state"]) as string[];
 
   const runAnother = useAlternateSave(another, api);
 
@@ -124,6 +126,8 @@ export function NewLeadDialog({ firmId, person, onClose, onCreated }: {
             />
           )}
         >
+          {/* BR-5.4: which of the firm's leads and accounts this may already be. Advice only: the save is as it was. */}
+          <LeadDuplicateWarning firmId={firmId} name={typed[0] ?? ""} business={typed[1] ?? ""} email={typed[2] ?? ""} state={typed[3] ?? ""} />
           <div className="grid gap-4 sm:grid-cols-2">
             <Field name="name" label="Name" required help="The person's name, or the business's when you don't know who to speak to.">{(field) => <Input {...field} autoFocus />}</Field>
             <Field name="title" label="Title">{(field) => <Input {...field} />}</Field>

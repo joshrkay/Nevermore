@@ -1373,6 +1373,8 @@ export type Database = {
         Args: { p_firm_id: string; p_opportunity_id: string; p_quote_request_id: number | null; p_area: string | null; p_visibility: string; p_body: string }
         Returns: Json
       }
+      // The duplicate warning for a new lead (20261202090000, BR-5.4).
+      duplicate_lead_check: { Args: { p_firm_id: string; p_name: string; p_business: string | null; p_email: string | null; p_state: string | null }; Returns: Json }
       // Roles, teams and visibility (20261201090000, CRM-X1.1): an owner changes a member, keeps teams, and sets who sees what.
       change_member: { Args: { p_firm_id: string; p_user_id: string; p_role: string; p_team_id: string | null }; Returns: undefined }
       save_team: { Args: { p_firm_id: string; p_team_id: string | null; p_name: string; p_parent_team_id: string | null }; Returns: string }
